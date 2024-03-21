@@ -80,12 +80,15 @@ def process_data(x, clipwise_target, sample_rate, padder):
     left_to_pad_or_truncate = diff // 2
     right_to_pad_or_truncate = diff - left_to_pad_or_truncate
 
+    # Standard audio length = actual audio length: no need to change
     if diff == 0:
         return (x, np.tile(clipwise_target, (config.frames_num, 1)))
+    # Standard audio length < actual audio length: truncate
     elif len(x) > audio_length:
         return (x[left_to_pad_or_truncate : len(x) - right_to_pad_or_truncate], np.tile(clipwise_target, (config.frames_num, 1)))
 
-    x = np.concatenate((np.zeros(left_to_pad_or_truncate), x, np.zeros(right_to_pad_or_truncate)),
+    # Standard audio length > actual audio length: pad
+    x = np.concatenate((np.random.rand(left_to_pad_or_truncate), x, np.random.rand(right_to_pad_or_truncate)),
                         axis=0)
     
     frame_length = sample_rate // config.frames_num_per_sec

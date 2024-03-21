@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from models import (Mlp, Cnn)
+from models import (Mlp, Wavegram_Logmel_Cnn)
 from eval import evaluate
 import config
 from data import (read_train_data, EventDataSet)
@@ -60,7 +60,7 @@ def train(args):
         model = Mlp(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     else:
-        model = Cnn(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
+        model = Wavegram_Logmel_Cnn(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     
     model.to(device)

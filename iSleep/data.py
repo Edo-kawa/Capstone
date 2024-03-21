@@ -70,7 +70,7 @@ class EventDataSet(Dataset):
         waveform = int16_to_float32(waveform)
         waveform = self.resample(waveform)
 
-        target = np.array(target)
+        target = np.asarray(target)
 
         return waveform, target
     

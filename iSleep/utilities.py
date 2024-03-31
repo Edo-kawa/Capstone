@@ -1,12 +1,8 @@
 import os
 import logging
-import h5py
-import soundfile
-import librosa
 import numpy as np
-import pandas as pd
 from scipy import stats
-from math import ceil
+from math import ceil, floor
 import datetime
 import pickle
 import config
@@ -65,10 +61,11 @@ def float32_to_int16(x):
 
 def int16_to_float32(x):
     return (x / 32767.).astype(np.float32)
-    
 
 def process_data(x, clipwise_target, sample_rate, padder):
-    """Pad or truncate all audio and their labels to specific length.
+    """
+    Designed to process non-ensemble data.
+    Pad or truncate all audio and their labels to specific length.
     Args:
         x: np.array (data_length)
         clipwise_target: np.array (classes_num)
@@ -88,8 +85,11 @@ def process_data(x, clipwise_target, sample_rate, padder):
         return (x[left_to_pad_or_truncate : len(x) - right_to_pad_or_truncate], np.tile(clipwise_target, (config.frames_num, 1)))
 
     # Standard audio length > actual audio length: pad
-    x = np.concatenate((np.random.rand(left_to_pad_or_truncate), x, np.random.rand(right_to_pad_or_truncate)),
-                        axis=0)
+    left_clip = np.random.normal(0, 1, left_to_pad_or_truncate)
+    right_clip = np.random.normal(0, 1, right_to_pad_or_truncate)
+    left_clip /= np.max(np.abs(left_clip))
+    right_clip /= np.max(np.abs(right_clip))
+    x = np.concatenate((left_clip, x, right_clip), axis=0)
     
     frame_length = sample_rate // config.frames_num_per_sec
     left_frames_num = left_to_pad_or_truncate // frame_length
@@ -102,10 +102,27 @@ def process_data(x, clipwise_target, sample_rate, padder):
 
     return (x, framewise_target)
 
+def generate_framewise_target(labels):
+    """
+    Designed to process ensemble data for frame-wise detection networks.
+    Args:
+        labels: np.array (bboxes_num, class_id+start_time+end_time=3)
+    """
 
+    frames_num = config.ensemble_frames_num
 
-    
+    framewise_target = np.zeros((frames_num, config.classes_num))
 
+    for label in labels:
+        class_id = int(label[0])
+
+        right_frame_id = ceil(label[2] * config.frames_num_per_sec) - 1         # label[2] != 0
+        left_frame_id = floor(label[1] * config.frames_num_per_sec)             # label[1] != 10
+
+        for frame_id in range(left_frame_id, right_frame_id+1):
+            framewise_target[frame_id, class_id] = 1
+
+    return framewise_target
 
 def d_prime(auc):
     d_prime = stats.norm().ppf(auc) * np.sqrt(2.0)

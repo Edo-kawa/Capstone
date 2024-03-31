@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from models import (Mlp, Wavegram_Logmel_Cnn)
+from models import (Mlp, Cnn, Cnn14)
 from eval import evaluate
 import config
 from data import (read_train_data, EventDataSet)
@@ -53,14 +53,14 @@ def train(args):
     classes_num = config.classes_num
     loss_func = F.binary_cross_entropy
 
-    if model_type == 'DecisionTree':
-        # To be done
-        pass
+    if model_type == 'CNN':
+        model = Cnn(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
+                    mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     elif model_type == 'MLP':
         model = Mlp(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     else:
-        model = Wavegram_Logmel_Cnn(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
+        model = Cnn14(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     
     model.to(device)

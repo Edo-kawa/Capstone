@@ -1,9 +1,9 @@
 import os
-import torch
 import librosa
 import numpy as np
+import pandas as pd
 from torch.utils.data import Dataset
-from utilities import process_data, float32_to_int16, int16_to_float32
+from utilities import process_data, generate_framewise_target, float32_to_int16, int16_to_float32
 
 import config
 
@@ -17,7 +17,7 @@ def read_train_data(data_dir, sample_rate):
     for ix, lb in enumerate(labels):
         if ix == 0:
             continue
-
+        
         data_path = os.path.join(data_dir, lb)
         audios_names = os.listdir(data_path)
         # audios_num = len(audios_names)
@@ -57,6 +57,46 @@ def read_train_data(data_dir, sample_rate):
 
     return train_samples, eval_samples, test_samples
 
+def read_ensemble_data(data_dir, sample_rate, model_type):
+    labels = config.ensemble_labels if model_type == 'DetectNet' else config.labels
+
+    labels_path = os.path.join(data_dir, 'data.csv')
+    train_samples = {'data': [], 'target': []}
+    eval_samples = {'data': [], 'target': []}
+    test_samples = {'data': [], 'target': []}
+
+    audios_num = 50
+    eval_index, test_index = int(audios_num * 0.6) + 1, int(audios_num * 0.8) + 1
+
+    labels_list = pd.read_csv(labels_path, sep='\t', header=None).to_numpy()
+
+    for i in range(audios_num):
+        name = str(i+1).zfill(2)
+        audio_name = name + '.wav'
+        audio_path = os.path.join(data_dir, audio_name)
+
+        if model_type == 'DetectNet':
+            target = labels_list[i][~np.isnan(labels_list[i])]
+            target = np.hsplit(target, indices_or_sections=len(target)/3)
+        else:
+            target = generate_framewise_target(labels_list[i])
+
+        if os.path.isfile(audio_path):
+            (waveform, _) = librosa.core.load(audio_path, sr=sample_rate, mono=True)
+        
+            if i < eval_index:
+                train_samples['data'].append(float32_to_int16(waveform))
+                train_samples['target'].append(target)
+            
+            elif i < test_index:
+                eval_samples['data'].append(float32_to_int16(waveform))
+                eval_samples['target'].append(target)
+            
+            else:
+                test_samples['data'].append(float32_to_int16(waveform))
+                test_samples['target'].append(target)
+
+    return train_samples, eval_samples, test_samples
 
 class EventDataSet(Dataset):
     def __init__(self, sr=32000, samples=None):

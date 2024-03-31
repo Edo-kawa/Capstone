@@ -24,21 +24,23 @@ def init_bn(bn):
     bn.weight.data.fill_(1.)
 
 class iSleepEventDetector():
-    def __init__(self, classification_head=DecisionTreeClassifier()):
+    def __init__(self, window_size=3200, hop_size=3200, classification_head=DecisionTreeClassifier()):
         self.noise_features = None
+        self.window_size = window_size
+        self.hop_size = hop_size
         self.classification_head = classification_head
     
     def update_noise_features(self, new_features):
         new_features -= self.noise_features
         self.noise_features += new_features * 0.5
 
-    def framing(self, input, window_size=3200, hop_size=3200):
+    def framing(self, input):
         """
         Input: (batch_size, data_length)
         Output: (batch_size, frames_num, frame_length)
         """
-        frames = [librosa.util.frame(clip, window_size, hop_size, axis=0) for clip in input]
-        return np.asarray(frames)
+        frames = [librosa.util.frame(x=clip, frame_length=self.window_size, hop_length=self.hop_size, axis=0) for clip in input]
+        return np.array(frames, dtype=np.float64)
 
     def get_rlh(self, frame, alpha=0.25):
         frame_length = len(frame)
@@ -56,11 +58,11 @@ class iSleepEventDetector():
         rms_low = np.sqrt(rms_low/frame_length)
         rms_high = np.sqrt(rms_high/frame_length)
         
-        return rms_low / rms_high
+        return rms_low / rms_high if rms_high != 0 else 0
 
     def compute_noise_features(self, noise_frames, frame_length):
         noise_rms = np.sqrt(np.sum(noise_frames**2, axis=1)/frame_length)
-        noise_rlh = np.array([self.get_rlh(noise_frame for noise_frame in noise_frames)])
+        noise_rlh = np.array([self.get_rlh(noise_frame) for noise_frame in noise_frames])
         noise_var = np.var(noise_frames, axis=1)
 
         noise_features = np.array([np.mean(noise_rms), np.std(noise_rms), np.mean(noise_rlh), \
@@ -75,14 +77,14 @@ class iSleepEventDetector():
 
     def compute_non_noise_features(self, non_noise_frames, frame_length):
         non_noise_rms = np.sqrt(np.sum(non_noise_frames**2, axis=1)/frame_length)
-        non_noise_rlh = np.array([self.get_rlh(non_noise_frame for non_noise_frame in non_noise_frames)])
+        non_noise_rlh = np.array([self.get_rlh(non_noise_frame) for non_noise_frame in non_noise_frames])
         non_noise_var = np.var(non_noise_frames, axis=1)
 
         non_noise_rms = (non_noise_rms - self.noise_features[0]) / self.noise_features[1]
         non_noise_rlh = (non_noise_rlh - self.noise_features[2]) / self.noise_features[3]
         non_noise_var = (non_noise_var - self.noise_features[4]) / self.noise_features[5]
 
-        return np.array([non_noise_rms, non_noise_rlh, non_noise_var])
+        return np.array([non_noise_rms, non_noise_rlh, non_noise_var], dtype=np.float64).transpose(1, 0)
 
     def fit(self, input, targets):
         """
@@ -91,7 +93,6 @@ class iSleepEventDetector():
         """
 
         windows = self.framing(input)    # (batch_size, frames_num, frame_length)
-        number_targets = np.argmax(targets, axis=1)
 
         samples_num, frames_num, frame_length = windows.shape
         stds = np.std(windows, axis=2)
@@ -105,7 +106,7 @@ class iSleepEventDetector():
         _ = self.compute_noise_features(noise_frames, frame_length)
 
         non_noise_frames = windows[vars >= 0.5]
-        non_noise_targets = number_targets[vars >= 0.5]
+        non_noise_targets = targets[vars >= 0.5]
 
         non_noise_features = self.compute_non_noise_features(non_noise_frames, frame_length)
 
@@ -116,27 +117,35 @@ class iSleepEventDetector():
     def predict(self, input, transform=False):
         """
         Input: (batch_size, data_length)
-        Output: (batch_size, frames_num, classes_num)"""
+        Output: (batch_size*frames_num,)"""
 
         windows = self.framing(input)
         samples_num, frames_num, frame_length = windows.shape
         stds = np.std(windows, axis=2)
-        preds = np.zeros((samples_num, frames_num))
+        preds = np.zeros((samples_num, frames_num, 4))
+
+        # result = np.zeros((samples_num, frames_num, 4), dtype=int)
         
         stds_mean, stds_min = np.mean(stds, axis=1).reshape(samples_num, 1), np.min(stds, axis=1).reshape(samples_num, 1)
         stds = (stds - stds_mean) / (stds_mean - stds_min)
 
         vars = stds**2
-        preds[vars < 0.5] = 0
 
         non_noise_frames = windows[vars >= 0.5]
         non_noise_features = self.compute_non_noise_features(non_noise_frames, frame_length)
-        preds[vars >= 0.5] = self.classification_head.predict(non_noise_features)
+        preds[vars >= 0.5] = self.classification_head.predict_proba(non_noise_features)
+
+        # preds = np.argmax(preds, axis=2)
+        preds = preds.reshape(-1, 2)
 
         if transform:
             noise_frames = windows[vars < 0.5]
             noise_features = self.compute_noise_features(noise_frames, frame_length)
             self.update_noise_features(noise_features)
+
+        # for sample_ind in range(samples_num):
+        #     for frame_ind in range(frames_num):
+        #         result[sample_ind, frame_ind, preds[sample_ind, frame_ind]] = 1
 
         return preds
 
@@ -246,7 +255,7 @@ class Cnn(nn.Module):
         self.spec_augmenter = SpecAugmentation(time_drop_width=32, time_stripes_num=2, 
             freq_drop_width=8, freq_stripes_num=2)
 
-        self.bn0 = nn.BatchNorm2d(mel_bins)
+        self.bn0 = nn.BatchNorm1d(mel_bins)
         self.bn1 = nn.BatchNorm1d(mel_bins*2)
         self.bn2 = nn.BatchNorm1d(mel_bins*4)
         self.bn3 = nn.BatchNorm1d(mel_bins*8)
@@ -268,6 +277,9 @@ class Cnn(nn.Module):
         init_bn(self.bn1)
         init_bn(self.bn2)
         init_bn(self.bn3)
+        init_layer(self.conv1)
+        init_layer(self.conv2)
+        init_layer(self.conv3)
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
@@ -278,16 +290,14 @@ class Cnn(nn.Module):
 
         x = self.spectrogram_extractor(input)   # (batch_size, 1, time_steps, freq_bins)
         x = self.logmel_extractor(x)    # (batch_size, 1, time_steps, mel_bins)
-
-        x = x.transpose(1, 3)   # (batch_size, mel_bins, time_steps, 1)
-        x = self.bn0(x)
-        x = x.transpose(1, 3)   # (batch_size, 1, time_steps, mel_bins)
         
         if self.training:
             x = self.spec_augmenter(x)  # (batch_size, 1, time_steps, mel_bins)
 
-        x = x.transpose(1, 3)
+        x = x.transpose(1, 3)   # (batch_size, mel_bins, time_steps, 1)
         x = x.squeeze(3)    # (batch_size, mel_bins, time_steps)
+
+        x = self.bn0(x)
 
         # Mixup on spectrogram
         if self.training and mixup_lambda is not None:
@@ -605,12 +615,3 @@ class Cnn14(nn.Module):
         framewise_output = pad_framewise_output(framewise_output, frames_num)
 
         return framewise_output
-
-class EnsembleClassifier(nn.Module):
-    def __init__(self, sample_rate=32000, window_size=1024, hop_size=320, mel_bins=64, fmin=50, 
-        fmax=14000, classes_num=4):
-
-        super(EnsembleClassifier, self).__init__()
-
-    def forward(self, input):
-        pass

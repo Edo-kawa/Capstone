@@ -1,6 +1,7 @@
 import os
 import logging
 import numpy as np
+import torch
 from scipy import stats
 from math import ceil, floor
 import datetime
@@ -102,6 +103,23 @@ def process_data(x, clipwise_target, sample_rate, padder):
 
     return (x, framewise_target)
 
+def process_label(label):
+    """
+    Output: grid_id, grid_offset, duration
+    """
+    class_id, start_time, end_time = int(label[0]), float(label[1]), float(label[2])
+
+    center_time = (start_time + end_time) / 2
+    duration = end_time - start_time
+
+    if duration < 1e-4:
+        return False
+
+    grid_id = int(center_time)
+    grid_offset = center_time - grid_id
+
+    return grid_id, grid_offset, duration, class_id
+
 def generate_framewise_target(labels):
     """
     Designed to process ensemble data for frame-wise detection networks.
@@ -112,17 +130,60 @@ def generate_framewise_target(labels):
     frames_num = config.ensemble_frames_num
 
     framewise_target = np.zeros((frames_num, config.classes_num))
+    framewise_target[:, 0] = 1
 
     for label in labels:
-        class_id = int(label[0])
+        class_id = int(label[0] + 1)
 
-        right_frame_id = ceil(label[2] * config.frames_num_per_sec) - 1         # label[2] != 0
-        left_frame_id = floor(label[1] * config.frames_num_per_sec)             # label[1] != 10
+        right_frame_id = ceil(label[2] * config.frames_num_per_sec) - 1         # label[2] (end_time) != 0
+        left_frame_id = floor(label[1] * config.frames_num_per_sec)             # label[1] (start_time) != 10
 
         for frame_id in range(left_frame_id, right_frame_id+1):
+            framewise_target[frame_id, 0] = 0
             framewise_target[frame_id, class_id] = 1
 
     return framewise_target
+
+def generate_gt(labels, grid_num=10):
+    """
+    Input: (bbox_num, 1+1+1=3)
+    Output: (grid_num, [confidence, class_id, grid_offset, duration]*2=4*2=8)
+    """
+    # bbox_num = label.shape[0]
+    # gt_conf = np.zeros([batch_size, grid_num*2])
+    # gt_cls = np.zeros([batch_size, grid_num*2])
+    # gt_offset = np.zeros([batch_size, grid_num*2])
+    # gt_dur = np.zeros([batch_size, grid_num*2])
+    gt = np.zeros((grid_num, 8))
+
+    for bbox in labels:
+        temp = process_label(bbox)
+
+        if temp:
+            grid_id, grid_offset, duration, class_id = temp
+
+            if grid_id < grid_num:
+                # gt_conf[batch_id, grid_id*2] = 1.0
+                # gt_conf[batch_id, grid_id*2+1] = 1.0
+                gt[grid_id, 0] = 1.0
+                gt[grid_id, 4] = 1.0
+
+                # gt_cls[batch_id, grid_id*2] = class_id
+                # gt_cls[batch_id, grid_id*2+1] = class_id
+                gt[grid_id, 1] = class_id
+                gt[grid_id, 5] = class_id
+
+                # gt_offset[batch_id, grid_id*2] = grid_offset
+                # gt_offset[batch_id, grid_id*2+1] = grid_offset
+                gt[grid_id, 2] = grid_offset
+                gt[grid_id, 6] = grid_offset
+
+                # gt_dur[batch_id, grid_id*2] = duration
+                # gt_dur[batch_id, grid_id*2+1] = duration
+                gt[grid_id, 3] = duration
+                gt[grid_id, 7] = duration
+    
+    return torch.from_numpy(gt).float()
 
 def d_prime(auc):
     d_prime = stats.norm().ppf(auc) * np.sqrt(2.0)

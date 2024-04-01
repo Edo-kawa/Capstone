@@ -35,7 +35,7 @@ class Mixup(object):
 
         return np.array(mixup_lambdas)
 
-def do_mixup(x, mixup_lambda, framewise=False):
+def do_mixup(x, mixup_lambda):
     """Mixup x of even indexes (0, 2, 4, ...) with x of odd indexes 
     (1, 3, 5, ...).
 
@@ -46,7 +46,7 @@ def do_mixup(x, mixup_lambda, framewise=False):
     Returns:
     out: (batch_size, ...) / torch.Tensor (batch_size, frames_num, ...)
     """
-    out = (x[0 :: 2].transpose(0, -1) * mixup_lambda[0 :: 2] + \
+    out = (x[0 :: 2].transpose(0, -1) * mixup_lambda[0 :: 2].transpose(0, -1) + \
         x[1 :: 2].transpose(0, -1) * mixup_lambda[1 :: 2]).transpose(0, -1)
     return out
     

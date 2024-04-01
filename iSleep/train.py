@@ -13,8 +13,8 @@ import torch.utils.data
 from models import (Mlp, Cnn, Cnn14)
 from eval import evaluate
 import config
-from data import (read_train_data, EventDataSet)
-from functions import (move_data_to_device, Mixup, do_mixup, generate_framewise_target)
+from data import (read_train_data, read_ensemble_data, EventDataSet)
+from functions import (move_data_to_device, Mixup, do_mixup)
 
 def train(args):
     """Args:
@@ -51,7 +51,7 @@ def train(args):
 
     num_workers = 2
     classes_num = config.classes_num
-    loss_func = F.binary_cross_entropy
+    criterion = F.binary_cross_entropy
 
     if model_type == 'CNN':
         model = Cnn(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
@@ -65,10 +65,11 @@ def train(args):
     
     model.to(device)
     
-    (train_samples, eval_samples, test_samples) = read_train_data(data_dir, sample_rate=sample_rate)
-    TrainSet = EventDataSet(sr=sample_rate, samples=train_samples)
-    EvalSet = EventDataSet(sr=sample_rate, samples=eval_samples)
-    TestSet = EventDataSet(sr=sample_rate, samples=test_samples)
+    # (train_samples, eval_samples, test_samples) = read_train_data(data_dir, sample_rate=sample_rate)
+    (train_samples, eval_samples, test_samples) = read_ensemble_data(data_dir=data_dir, sample_rate=sample_rate, model_type=model_type)
+    TrainSet = EventDataSet(sr=sample_rate, duration=config.ensemble_duration, samples=train_samples)
+    EvalSet = EventDataSet(sr=sample_rate, duration=config.ensemble_duration, samples=eval_samples)
+    TestSet = EventDataSet(sr=sample_rate, duration=config.ensemble_duration, samples=test_samples)
 
     train_loader = torch.utils.data.DataLoader(dataset=TrainSet,
                                               batch_size=batch_size if not if_mixup else batch_size*2, 
@@ -132,8 +133,8 @@ def train(args):
             framewise_output = model(waveform, mixup_lambda)
             (batch_size, frames_num, classes_num) = framewise_output.shape
 
-            loss = loss_func(framewise_output.view(batch_size*frames_num, classes_num), 
-                            target.view(batch_size*frames_num, classes_num))
+            loss = criterion(framewise_output.view(batch_size*frames_num, classes_num).float(), 
+                            target.view(batch_size*frames_num, classes_num).float())
             loss.backward()
             print(f'Iter: {cur}, Loss: {loss}')
 

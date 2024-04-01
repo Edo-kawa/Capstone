@@ -1,5 +1,4 @@
 import numpy as np
-import librosa
 
 import torch
 import torch.nn as nn
@@ -8,6 +7,7 @@ from torchlibrosa.stft import Spectrogram, LogmelFilterBank
 from torchlibrosa.augmentation import SpecAugmentation
 
 from models import init_bn, init_layer
+from functions import do_mixup
 
 def init_sequential(layer):
     if isinstance(layer, nn.Conv1d) or isinstance(layer, nn.Conv2d):
@@ -28,84 +28,34 @@ def compute_IOU(c1, d1, c2, d2):
 
     return 0
 
-def process_label(label):
-    """
-    Output: grid_id, grid_offset, duration
-    """
-    class_id, start_time, end_time = int(label[0]), float(label[1]), float(label[2])
-
-    center_time = (start_time + end_time) / 2
-    duration = end_time - start_time
-
-    if duration < 1e-4:
-        return False
-
-    grid_id = int(center_time)
-    grid_offset = center_time - grid_id
-
-    return grid_id, grid_offset, duration, class_id
-
 def process_pred(pred):
     """
-    Input: (batch_size, grid_num=10, (1+1+1)*2+3=9)
+    Input: (batch_size, grid_num=10, (1+1+1+3)*2=12)
     Output: (confidence, class_vector, grid_offset, duration)
     """
     batch_size, grid_num = pred.shape[:-1]
-    pred_conf = np.zeros([batch_size, grid_num*2])
-    pred_cls = np.zeros([batch_size, grid_num*2, 3])
-    pred_offset = np.zeros([batch_size, grid_num*2])
-    pred_dur = np.zeros([batch_size, grid_num*2])
+    pred_conf = torch.zeros([batch_size, grid_num*2])
+    pred_cls = torch.zeros([batch_size, grid_num*2, 3])
+    pred_offset = torch.zeros([batch_size, grid_num*2])
+    pred_dur = torch.zeros([batch_size, grid_num*2])
 
     for batch_id in range(batch_size):
         for grid_id in range(grid_num):
             pred_conf[batch_id, grid_id*2] = pred[batch_id, grid_id, 2]
-            pred_conf[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 5]
+            pred_conf[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 8]
 
-            pred_cls[batch_id, grid_id*2] = pred[batch_id, grid_id, 6:9]
-            pred_cls[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 6:9]
+            pred_cls[batch_id, grid_id*2] = pred[batch_id, grid_id, 3:6]
+            pred_cls[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 9:]
 
             pred_offset[batch_id, grid_id*2] = pred[batch_id, grid_id, 0]
-            pred_offset[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 3]
+            pred_offset[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 6]
 
             pred_dur[batch_id, grid_id*2] = pred[batch_id, grid_id, 1]
-            pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 4]
+            pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 7]
 
-    return torch.from_numpy(pred_conf).float(), torch.from_numpy(pred_cls).float(), \
-        torch.from_numpy(pred_offset).float(), torch.from_numpy(pred_dur).float()
-
-def generate_gt(grid_num, labels):
-    """
-    Input: (batch_size, bbox_num, 1+1+1=3)
-    Output: (confidence, class_id, grid_offset, duration)
-    """
-    batch_size, bbox_num = labels.shape[:-1]
-    gt_conf = np.zeros([batch_size, grid_num*2])
-    gt_cls = np.zeros([batch_size, grid_num*2])
-    gt_offset = np.zeros([batch_size, grid_num*2])
-    gt_dur = np.zeros([batch_size, grid_num*2])
-
-    for batch_id in range(batch_size):
-        for label in labels[batch_id]:
-            temp = process_label(label)
-
-            if temp:
-                grid_id, grid_offset, duration, class_id = temp
-
-                if grid_id < grid_num:
-                    gt_conf[batch_id, grid_id*2] = 1.0
-                    gt_conf[batch_id, grid_id*2+1] = 1.0
-
-                    gt_cls[batch_id, grid_id*2] = class_id
-                    gt_cls[batch_id, grid_id*2+1] = class_id
-
-                    gt_offset[batch_id, grid_id*2] = grid_offset
-                    gt_offset[batch_id, grid_id*2+1] = grid_offset
-
-                    gt_dur[batch_id, grid_id*2] = duration
-                    gt_dur[batch_id, grid_id*2+1] = duration
-    
-    return torch.from_numpy(gt_conf).float(), torch.from_numpy(gt_cls).long(), \
-        torch.from_numpy(gt_offset).float(), torch.from_numpy(gt_dur).float()
+    return pred_conf.view(-1, 1), pred_cls.view(-1, 3), pred_offset.view(-1, 1), pred_dur.view(-1, 1)
+    # return torch.from_numpy(pred_conf).float(), torch.from_numpy(pred_cls).float(), \
+    #     torch.from_numpy(pred_offset).float(), torch.from_numpy(pred_dur).float()
 
 class EnsembleLoss(nn.Module):
     def __init__(self, classes_num=3, noobj_scale=0.5, coord_scale=5.0):
@@ -115,10 +65,19 @@ class EnsembleLoss(nn.Module):
         self.noobj_scale = noobj_scale
         self.coord_scale = coord_scale
 
-    def forward(self, pred, labels):
+    def forward(self, pred, target):
+        """
+        pred: (batch_size, grid_num, (1+1+1+3)*2=12)
+        target: (batch_size, grid_num, (1+1+1+1)*2=8)
+        [confidence, class_id, grid_offset, duration]
+        """
         batch_size = pred.shape[0]
         pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred)
-        gt_conf, gt_cls, gt_offset, gt_dur = generate_gt(labels)
+
+        gt_conf = target[:, :, [0, 4]].view(-1, 1)
+        gt_cls = target[:, :, [1, 5]].view(-1, 1)
+        gt_offset = target[:, :, [2, 6]].view(-1, 1)
+        gt_dur = target[:, :, [3, 7]].view(-1, 1)
 
         obj_mask = (gt_conf == 1).float()
         noobj_mask = (gt_conf == 0).float()
@@ -133,8 +92,12 @@ class EnsembleLoss(nn.Module):
         conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
 
         obj_gt_cls = obj_mask * gt_cls
-        obj_pred_cls = obj_mask.unsqueeze(2).repeat(1, 1, 3) * pred_cls.permute(0, 2, 1)
-        cls_loss = CELoss(obj_pred_cls, obj_gt_cls.long())
+        obj_gt_cls = torch.eye(3)[obj_gt_cls.view(-1).long()]
+        obj_pred_cls = obj_mask.repeat(1, 3) * pred_cls
+        cls_loss = 0
+        for i in range(batch_size):
+            cls_loss += CELoss(obj_pred_cls[i], obj_gt_cls[i])
+        cls_loss /= batch_size
 
         obj_offset = obj_mask * offset_diff
         offset_loss = (self.coord_scale * obj_offset.sum()) / batch_size
@@ -176,13 +139,15 @@ class Conv1dBlock(nn.Module):
         
     def forward(self, input, pool_size=2, pool_type='avg'):
         x = self.net(input)
-        if pool_type == 'max':
-            x = F.max_pool2d(x, kernel_size=pool_size)
+        if pool_type is None:
+            return x
+        elif pool_type == 'max':
+            x = F.max_pool1d(x, kernel_size=pool_size)
         elif pool_type == 'avg':
-            x = F.avg_pool2d(x, kernel_size=pool_size)
+            x = F.avg_pool1d(x, kernel_size=pool_size)
         elif pool_type == 'avg+max':
-            x1 = F.avg_pool2d(x, kernel_size=pool_size)
-            x2 = F.max_pool2d(x, kernel_size=pool_size)
+            x1 = F.avg_pool1d(x, kernel_size=pool_size)
+            x2 = F.max_pool1d(x, kernel_size=pool_size)
             x = x1 + x2
         else:
             raise Exception('Incorrect argument!')
@@ -229,8 +194,12 @@ class DetectNet(nn.Module):
         self.conv4 = nn.Sequential(
                         nn.Conv1d(in_channels=512, out_channels=512, kernel_size=3, stride=1, bias=False),
                         nn.BatchNorm1d(512),
-                        nn.ReLU(),
-                        Conv1dBlock(in_channels=512, out_channels=1024, num_layers=5),
+                        nn.ReLU()
+                    )
+        
+        self.conv5 = Conv1dBlock(in_channels=512, out_channels=1024, num_layers=5)
+
+        self.conv6 = nn.Sequential(
                         nn.Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=1, bias=False),
                         nn.BatchNorm1d(1024),
                         nn.ReLU(),
@@ -240,7 +209,7 @@ class DetectNet(nn.Module):
                     )
         
         # 25 -> 20
-        self.conv5 = nn.Sequential(
+        self.conv7 = nn.Sequential(
                         nn.Conv1d(in_channels=256, out_channels=128, kernel_size=6, stride=1, bias=False),
                         nn.BatchNorm1d(128),
                         nn.ReLU(),
@@ -250,12 +219,12 @@ class DetectNet(nn.Module):
                     )
         
         # Detection Head
-        self.conv6 = nn.Sequential(
+        self.conv8 = nn.Sequential(
                         nn.Conv1d(in_channels=1280, out_channels=1024, kernel_size=3, stride=1, padding=1, bias=False),
                         nn.BatchNorm1d(1024),
                         nn.ReLU(),
-                        nn.Conv1d(in_channels=1024, out_channels=9, kernel_size=1, stride=1, bias=False),
-                        nn.BatchNorm1d(128),
+                        nn.Conv1d(in_channels=1024, out_channels=12, kernel_size=1, stride=1, bias=False),
+                        nn.BatchNorm1d(12),
                         nn.ReLU()
                     )
         
@@ -263,12 +232,12 @@ class DetectNet(nn.Module):
         
     def init_weight(self):
         self.conv4.apply(init_sequential)
-        self.conv5.apply(init_sequential)
-        self.conv6.apply(init_sequential)
+        self.conv7.apply(init_sequential)
+        self.conv8.apply(init_sequential)
 
     # 32 x 128 x 20 -> 32 x 256 x 10
     def reorg(self, x, stride=2):
-        batch_size, classes_num, grid_num = input.shape
+        batch_size, classes_num, grid_num = x.shape
 
         # 32 x 128 x 20 -> 32 x 128 x 2 x 10
         x = x.view(batch_size, classes_num, int(grid_num / stride), stride).transpose(3, 2).contiguous()
@@ -278,7 +247,7 @@ class DetectNet(nn.Module):
         
         return x
 
-    def forward(self, input):
+    def forward(self, input, mixup_lambda=None):
         """
         Input: (batch_size, data_length)
         Output: (batch_size, grid_num=10, (1+1+1)*2+classes_num=9)"""
@@ -293,20 +262,27 @@ class DetectNet(nn.Module):
         x = x.squeeze(3)    # (batch_size, mel_bins, time_steps)
 
         x = self.bn0(x)
+
+        # Mixup on spectrogram
+        if self.training and mixup_lambda is not None:
+            x = do_mixup(x, mixup_lambda)
         
         x = self.conv1(x, pool_size=2, pool_type='max')
         x = self.conv2(x, pool_size=2, pool_type='max')
 
         x1 = torch.clone(x)     # (batch_size, 256, 25)
-        x1 = self.conv5(x1)     # (batch_size, 128, 20)
+        x1 = self.conv7(x1)     # (batch_size, 128, 20)
         x1 = self.reorg(x1)     # (batch_size, 256, 10)
 
         x = self.conv3(x, pool_size=2, pool_type='max')
         x = self.conv4(x)
+        x = self.conv5(x, pool_size=None, pool_type=None)
+        x = self.conv6(x)
 
         x2 = torch.clone(x)     # (batch_size, 1024, 10)
+
         x = torch.concat((x2, x1), dim=1)   # (batch_size, 1280, 10)
         
-        x = self.conv6(x)       # (batch_size, 9, 10)
+        x = self.conv8(x)       # (batch_size, 12, 10)
         
         return x.transpose(2, 1)

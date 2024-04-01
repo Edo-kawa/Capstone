@@ -89,7 +89,7 @@ class iSleepEventDetector():
     def fit(self, input, targets):
         """
         input: (batch_size, data_length)
-        targets: (batch_size, frames_num, classes_num)
+        targets: (batch_size, frames_num)
         """
 
         windows = self.framing(input)    # (batch_size, frames_num, frame_length)
@@ -117,7 +117,7 @@ class iSleepEventDetector():
     def predict(self, input, transform=False):
         """
         Input: (batch_size, data_length)
-        Output: (batch_size*frames_num,)"""
+        Output: (batch_size*frames_num, classes_num)"""
 
         windows = self.framing(input)
         samples_num, frames_num, frame_length = windows.shape
@@ -133,10 +133,13 @@ class iSleepEventDetector():
 
         non_noise_frames = windows[vars >= 0.5]
         non_noise_features = self.compute_non_noise_features(non_noise_frames, frame_length)
+
+        preds[vars < 0.5, 0] = 1
+
         preds[vars >= 0.5] = self.classification_head.predict_proba(non_noise_features)
 
         # preds = np.argmax(preds, axis=2)
-        preds = preds.reshape(-1, 2)
+        preds = preds.reshape(-1, 4)
 
         if transform:
             noise_frames = windows[vars < 0.5]

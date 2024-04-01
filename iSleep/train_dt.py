@@ -8,7 +8,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from models import (iSleepEventDetector)
 # from eval import evaluate
 import config
-from data import (read_train_data)
+from data import (read_ensemble_data)
 
 def train(args):
     """Args:
@@ -25,7 +25,7 @@ def train(args):
 
     model = iSleepEventDetector(window_size=window_size, hop_size=hop_size)
 
-    (train_samples, eval_samples, test_samples) = read_train_data(data_dir, sample_rate=sample_rate)
+    (train_samples, eval_samples, test_samples) = read_ensemble_data(data_dir, sample_rate=sample_rate, model_type='DT')
 
     onehot_train_targets = np.array(train_samples['target'])
     train_targets = np.argmax(onehot_train_targets, axis=2)
@@ -40,15 +40,15 @@ def train(args):
 
     eval_preds = model.predict(eval_samples['data'])
 
-    onehot_eval_targets = onehot_eval_targets.reshape(-1, 2)
+    onehot_eval_targets = onehot_eval_targets.reshape(-1, 4)
     eval_ap = average_precision_score(onehot_eval_targets, eval_preds, average=None)
     eval_auc = roc_auc_score(onehot_eval_targets, eval_preds, average=None)
-
+    
     model.fit(eval_samples['data'], eval_targets)
 
     test_preds = model.predict(test_samples['data'])
 
-    onehot_test_targets = onehot_test_targets.reshape(-1, 2)
+    onehot_test_targets = onehot_test_targets.reshape(-1, 4)
     test_ap = average_precision_score(onehot_test_targets, test_preds, average=None)
     test_auc = roc_auc_score(onehot_test_targets, test_preds, average=None)
 

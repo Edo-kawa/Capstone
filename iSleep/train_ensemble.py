@@ -56,6 +56,8 @@ def train(args):
     model = DetectNet(thresh1=0.1, thresh2=0.5, sample_rate=sample_rate, window_size=window_size,
                       hop_size=hop_size, mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     
+    model.to(device)
+    
     (train_samples, eval_samples, test_samples) = read_ensemble_data(data_dir=data_dir, sample_rate=sample_rate, model_type=model_type)
     TrainSet = EventDataSet(sr=sample_rate, samples=train_samples)
     EvalSet = EventDataSet(sr=sample_rate, samples=eval_samples)

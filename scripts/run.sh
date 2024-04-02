@@ -10,4 +10,5 @@ CUDA_VISIBLE_DEVICES=0 python3 iSleep/train.py train \
     --mixup \
     --batch_size=32 \
     --learning_rate=1e-3 \
-    --num_iters=10000
+    --num_iters=1000 \
+    --ft_iters=600

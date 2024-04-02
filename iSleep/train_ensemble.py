@@ -29,6 +29,7 @@ def train(args):
       batch_size: int
       learning_rate: float
       num_iters: int
+      ft_iters: int
       if_resume: bool
     """
 
@@ -44,6 +45,7 @@ def train(args):
     batch_size = args.batch_size
     learning_rate = args.learning_rate
     num_iters = args.num_iters
+    ft_iters = args.ft_iters
     if_resume = args.resume
 
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -93,25 +95,10 @@ def train(args):
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, 
         betas=(0.9, 0.999), eps=1e-08, weight_decay=0., amsgrad=True)
 
+    # Training
     for cur in range(cur_iter, num_iters):
         for i, (waveform, target) in enumerate(train_loader):
             waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device)
-
-            if cur % 500 == 0 or cur == 0:
-                eval_statistics = evaluate_ensemble(model, eval_loader)
-                test_statistics = evaluate_ensemble(model, test_loader)
-
-                checkpoint['eval_statistics'] = eval_statistics
-                checkpoint['test_statistics'] = test_statistics
-
-                print(f'cur_iter: {cur}, eval_mAP: {np.mean(eval_statistics["average_precision"])}, roc_auc: {eval_statistics["roc_auc"]}')
-                print(f'cur_iter: {cur}, test_mAP: {np.mean(test_statistics["average_precision"])}, roc_auc: {test_statistics["roc_auc"]}')
-
-            if cur % 1000 == 0:
-                checkpoint['model'] = model.state_dict()
-                checkpoint['iteration'] = cur
-                checkpoint_path = f'./checkpoints/event_detectors/{model_type}.pth'
-                torch.save(checkpoint, checkpoint_path)
 
             model.train()
 
@@ -132,6 +119,51 @@ def train(args):
             optimizer.step()
             optimizer.zero_grad()
 
+            if (cur + 1) % 100 == 0:
+                eval_statistics = evaluate_ensemble(model, eval_loader)
+                checkpoint['eval_statistics'] = eval_statistics
+
+                print(f'cur_iter: {cur}, eval_mAP: {np.mean(eval_statistics["average_precision"])}, roc_auc: {eval_statistics["roc_auc"]}')
+
+                checkpoint['model'] = model.state_dict()
+                checkpoint['iteration'] = cur
+                checkpoint_path = f'./checkpoints/event_detectors/{model_type}.pth'
+                torch.save(checkpoint, checkpoint_path)
+    
+    # Fine-tuning
+    for cur in range(ft_iters):
+        for i, (waveform, target) in enumerate(eval_loader):
+            waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device)
+
+            model.train()
+
+            if if_mixup:
+                mixup_lambda = mixup.get_lambda(waveform.shape[0])
+                mixup_lambda = move_data_to_device(mixup_lambda, device)
+                target = do_mixup(target, mixup_lambda)
+            else:
+                mixup_lambda = None
+
+            ensemble_output = model(waveform, mixup_lambda)
+            (batch_size, frames_num, classes_num) = ensemble_output.shape
+
+            loss = criterion(ensemble_output, target)
+            loss.backward()
+            print(f'Iter: {cur}, Loss: {loss}')
+
+            optimizer.step()
+            optimizer.zero_grad()
+
+            if (cur + 1) % 100 == 0:
+                test_statistics = evaluate_ensemble(model, test_loader)
+                checkpoint['test_statistics'] = test_statistics
+
+                print(f'cur_iter: {cur}, test_mAP: {np.mean(test_statistics["average_precision"])}, roc_auc: {test_statistics["roc_auc"]}')
+
+                checkpoint['model'] = model.state_dict()
+                checkpoint['iteration'] = cur
+                checkpoint_path = f'./checkpoints/event_detectors/{model_type}.pth'
+                torch.save(checkpoint, checkpoint_path)
 
 if __name__ == '__main__':
 
@@ -150,7 +182,8 @@ if __name__ == '__main__':
     parser_train.add_argument('--mixup', action='store_true', default=False)
     parser_train.add_argument('--batch_size', type=int, default=32)
     parser_train.add_argument('--learning_rate', type=float, default=1e-3)
-    parser_train.add_argument('--num_iters', type=int, default=10000)
+    parser_train.add_argument('--num_iters', type=int, default=1000)
+    parser_train.add_argument('--ft_iters', type=int, default=0)
     parser_train.add_argument('--resume', action='store_true', default=False)
     
     args = parser.parse_args()

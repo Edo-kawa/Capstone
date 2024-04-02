@@ -13,7 +13,7 @@ import torch.utils.data
 from models import (Mlp, Cnn, Cnn14)
 from eval import evaluate
 import config
-from data import (read_train_data, read_ensemble_data, EventDataSet)
+from data import (read_ensemble_data, EventDataSet)
 from functions import (move_data_to_device, Mixup, do_mixup)
 
 def train(args):
@@ -29,6 +29,7 @@ def train(args):
       batch_size: int
       learning_rate: float
       num_iters: int
+      ft_iters: int
       if_resume: bool
     """
 
@@ -44,6 +45,7 @@ def train(args):
     batch_size = args.batch_size
     learning_rate = args.learning_rate
     num_iters = args.num_iters
+    ft_iters = args.ft_iters
     if_resume = args.resume
 
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -105,21 +107,42 @@ def train(args):
         for i, (waveform, target) in enumerate(train_loader):
             waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device)
 
-            if cur % 500 == 0 or cur == 0:
+            model.train()
+
+            if if_mixup:
+                mixup_lambda = mixup.get_lambda(waveform.shape[0])
+                mixup_lambda = move_data_to_device(mixup_lambda, device)
+                target = do_mixup(target, mixup_lambda)
+            else:
+                mixup_lambda = None
+
+            framewise_output = model(waveform, mixup_lambda)
+            (batch_size, frames_num, classes_num) = framewise_output.shape
+
+            loss = criterion(framewise_output.view(batch_size*frames_num, classes_num).float(), 
+                            target.view(batch_size*frames_num, classes_num).float())
+            loss.backward()
+            print(f'Iter: {cur}, Loss: {loss}')
+
+            optimizer.step()
+            optimizer.zero_grad()
+
+            if (cur + 1) % 100 == 0:
                 eval_statistics = evaluate(model, eval_loader)
-                test_statistics = evaluate(model, test_loader)
 
                 checkpoint['eval_statistics'] = eval_statistics
-                checkpoint['test_statistics'] = test_statistics
 
                 print(f'cur_iter: {cur}, eval_mAP: {np.mean(eval_statistics["average_precision"])}, roc_auc: {eval_statistics["roc_auc"]}')
-                print(f'cur_iter: {cur}, test_mAP: {np.mean(test_statistics["average_precision"])}, roc_auc: {test_statistics["roc_auc"]}')
 
-            if cur % 1000 == 0:
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur
                 checkpoint_path = f'./checkpoints/event_detectors/{model_type}.pth'
                 torch.save(checkpoint, checkpoint_path)
+
+
+    for cur in range(ft_iters):
+        for i, (waveform, target) in enumerate(eval_loader):
+            waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device)
 
             model.train()
 
@@ -141,6 +164,18 @@ def train(args):
             optimizer.step()
             optimizer.zero_grad()
 
+            if (cur + 1) % 100 == 0:
+                test_statistics = evaluate(model, test_loader)
+
+                checkpoint['test_statistics'] = test_statistics
+
+                print(f'cur_iter: {cur}, test_mAP: {np.mean(test_statistics["average_precision"])}, roc_auc: {test_statistics["roc_auc"]}')
+
+                checkpoint['model'] = model.state_dict()
+                checkpoint['iteration'] = cur
+                checkpoint_path = f'./checkpoints/event_detectors/{model_type}.pth'
+                torch.save(checkpoint, checkpoint_path)
+
 
 if __name__ == '__main__':
 
@@ -159,7 +194,8 @@ if __name__ == '__main__':
     parser_train.add_argument('--mixup', action='store_true', default=False)
     parser_train.add_argument('--batch_size', type=int, default=32)
     parser_train.add_argument('--learning_rate', type=float, default=1e-3)
-    parser_train.add_argument('--num_iters', type=int, default=10000)
+    parser_train.add_argument('--num_iters', type=int, default=1000)
+    parser_train.add_argument('--ft_iters', type=int, default=0)
     parser_train.add_argument('--resume', action='store_true', default=False)
     
     args = parser.parse_args()

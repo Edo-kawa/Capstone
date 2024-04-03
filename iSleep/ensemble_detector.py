@@ -120,13 +120,13 @@ class Conv1dBlock(nn.Module):
             if i % 2 == 0:
                 self.net.append(nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
                                kernel_size=3, stride=1,
-                               padding=1, bias=False))
+                               padding=1))
                 bn = out_channels
             
             else:
                 self.net.append(nn.Conv1d(in_channels=out_channels, out_channels=in_channels,
                                kernel_size=3, stride=1,
-                               padding=1, bias=False))
+                               padding=1))
                 bn = in_channels
             
             self.net.append(nn.BatchNorm1d(bn))
@@ -192,7 +192,7 @@ class DetectNet(nn.Module):
 
         # 12 -> 10
         self.conv4 = nn.Sequential(
-                        nn.Conv1d(in_channels=512, out_channels=512, kernel_size=3, stride=1, bias=False),
+                        nn.Conv1d(in_channels=512, out_channels=512, kernel_size=3, stride=1),
                         nn.BatchNorm1d(512),
                         nn.ReLU()
                     )
@@ -200,30 +200,30 @@ class DetectNet(nn.Module):
         self.conv5 = Conv1dBlock(in_channels=512, out_channels=1024, num_layers=5)
 
         self.conv6 = nn.Sequential(
-                        nn.Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=1, bias=False),
+                        nn.Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=1),
                         nn.BatchNorm1d(1024),
                         nn.ReLU(),
-                        nn.Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=1, bias=False),
+                        nn.Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=1),
                         nn.BatchNorm1d(1024),
                         nn.ReLU()
                     )
         
         # 25 -> 20
         self.conv7 = nn.Sequential(
-                        nn.Conv1d(in_channels=256, out_channels=128, kernel_size=6, stride=1, bias=False),
+                        nn.Conv1d(in_channels=256, out_channels=128, kernel_size=6, stride=1),
                         nn.BatchNorm1d(128),
                         nn.ReLU(),
-                        nn.Conv1d(in_channels=128, out_channels=128, kernel_size=1, stride=1, bias=False),
+                        nn.Conv1d(in_channels=128, out_channels=128, kernel_size=1, stride=1),
                         nn.BatchNorm1d(128),
                         nn.ReLU()
                     )
         
         # Detection Head
         self.conv8 = nn.Sequential(
-                        nn.Conv1d(in_channels=1280, out_channels=1024, kernel_size=3, stride=1, padding=1, bias=False),
+                        nn.Conv1d(in_channels=1280, out_channels=1024, kernel_size=3, stride=1, padding=1),
                         nn.BatchNorm1d(1024),
                         nn.ReLU(),
-                        nn.Conv1d(in_channels=1024, out_channels=12, kernel_size=1, stride=1, bias=False),
+                        nn.Conv1d(in_channels=1024, out_channels=12, kernel_size=1, stride=1),
                         nn.BatchNorm1d(12),
                         nn.ReLU()
                     )

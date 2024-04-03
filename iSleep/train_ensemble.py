@@ -113,11 +113,12 @@ def train(args):
             (batch_size, frames_num, classes_num) = ensemble_output.shape
 
             loss = criterion(ensemble_output, target)
+            
+            optimizer.zero_grad()
             loss.backward()
             print(f'Iter: {cur}, Loss: {loss}')
 
             optimizer.step()
-            optimizer.zero_grad()
 
             if (cur + 1) % 100 == 0:
                 eval_statistics = evaluate_ensemble(model, eval_loader)
@@ -148,11 +149,12 @@ def train(args):
             (batch_size, frames_num, classes_num) = ensemble_output.shape
 
             loss = criterion(ensemble_output, target)
+            
+            optimizer.zero_grad()
             loss.backward()
             print(f'Iter: {cur}, Loss: {loss}')
 
             optimizer.step()
-            optimizer.zero_grad()
 
             if (cur + 1) % 100 == 0:
                 test_statistics = evaluate_ensemble(model, test_loader)

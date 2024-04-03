@@ -264,11 +264,11 @@ class Cnn(nn.Module):
         self.bn3 = nn.BatchNorm1d(mel_bins*8)
 
         self.conv1 = nn.Conv1d(in_channels=64, out_channels=128,
-                               kernel_size=3, stride=1, padding=1, bias=False)
+                               kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv1d(in_channels=128, out_channels=256,
-                               kernel_size=3, stride=1, padding=1, bias=False)
+                               kernel_size=3, stride=1, padding=1)
         self.conv3 = nn.Conv1d(in_channels=256, out_channels=512,
-                               kernel_size=3, stride=1, padding=1, bias=False)
+                               kernel_size=3, stride=1, padding=1)
 
         self.fc1 = nn.Linear(512, 512, bias=True)
         self.fc_audioset = nn.Linear(512, classes_num, bias=True)
@@ -316,6 +316,8 @@ class Cnn(nn.Module):
         x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
         x = F.dropout(x, p=0.5, training=self.training)
 
+        x = x.transpose(2, 1)
+
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.5, training=self.training)
 
@@ -338,12 +340,12 @@ class ConvPreWavBlock(nn.Module):
         self.conv1 = nn.Conv1d(in_channels=in_channels, 
                               out_channels=out_channels,
                               kernel_size=3, stride=1,
-                              padding=1, bias=False)
+                              padding=1)
                               
         self.conv2 = nn.Conv1d(in_channels=out_channels, 
                               out_channels=out_channels,
                               kernel_size=3, stride=1, dilation=2, 
-                              padding=2, bias=False)
+                              padding=2)
                               
         self.bn1 = nn.BatchNorm1d(out_channels)
         self.bn2 = nn.BatchNorm1d(out_channels)
@@ -373,12 +375,12 @@ class ConvBlock(nn.Module):
         self.conv1 = nn.Conv2d(in_channels=in_channels, 
                               out_channels=out_channels,
                               kernel_size=(3, 3), stride=(1, 1),
-                              padding=(1, 1), bias=False)
+                              padding=(1, 1))
                               
         self.conv2 = nn.Conv2d(in_channels=out_channels, 
                               out_channels=out_channels,
                               kernel_size=(3, 3), stride=(1, 1),
-                              padding=(1, 1), bias=False)
+                              padding=(1, 1))
                               
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.bn2 = nn.BatchNorm2d(out_channels)
@@ -423,7 +425,7 @@ class Wavegram_Logmel_Cnn14(nn.Module):
         amin = 1e-10
         top_db = None
 
-        self.pre_conv0 = nn.Conv1d(in_channels=1, out_channels=64, kernel_size=11, stride=5, padding=5, bias=False)
+        self.pre_conv0 = nn.Conv1d(in_channels=1, out_channels=64, kernel_size=11, stride=5, padding=5)
         self.pre_bn0 = nn.BatchNorm1d(64)
         self.pre_block1 = ConvPreWavBlock(64, 64)
         self.pre_block2 = ConvPreWavBlock(64, 128)
@@ -470,12 +472,19 @@ class Wavegram_Logmel_Cnn14(nn.Module):
         Input: (batch_size, data_length)"""
 
         # Wavegram
+        print(input.shape)
         a1 = F.relu_(self.pre_bn0(self.pre_conv0(input[:, None, :])))
+        print(a1.shape)
         a1 = self.pre_block1(a1, pool_size=4)
+        print(a1.shape)
         a1 = self.pre_block2(a1, pool_size=4)
+        print(a1.shape)
         a1 = self.pre_block3(a1, pool_size=4)
+        print(a1.shape)
         a1 = a1.reshape((a1.shape[0], -1, 32, a1.shape[-1])).transpose(2, 3)
+        print(a1.shape)
         a1 = self.pre_block4(a1, pool_size=(2, 1))
+        print(a1.shape)
 
         # Log mel spectrogram
         x = self.spectrogram_extractor(input)   # (batch_size, 1, time_steps, freq_bins)
@@ -558,6 +567,8 @@ class Cnn14(nn.Module):
         self.conv_block2 = ConvBlock(in_channels=64, out_channels=128)
         self.conv_block3 = ConvBlock(in_channels=128, out_channels=256)
         self.conv_block4 = ConvBlock(in_channels=256, out_channels=512)
+        self.conv_block5 = ConvBlock(in_channels=512, out_channels=1024)
+        self.conv_block6 = ConvBlock(in_channels=1024, out_channels=2048)
 
         self.fc1 = nn.Linear(2048, 2048, bias=True)
         self.fc_audioset = nn.Linear(2048, classes_num, bias=True)
@@ -610,7 +621,9 @@ class Cnn14(nn.Module):
         x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
         x = x1 + x2
         x = F.dropout(x, p=0.5, training=self.training)
+        x = x.transpose(1, 2)
         x = F.relu_(self.fc1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
         segmentwise_output = torch.sigmoid(self.fc_audioset(x))
 
         # Get framewise output

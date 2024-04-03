@@ -61,12 +61,13 @@ def train(args):
     elif model_type == 'MLP':
         model = Mlp(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
-    elif model_type == 'Wavegram_Logmel_CNN14':
-        model = Wavegram_Logmel_Cnn14(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
-                    mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
-    else:
+    elif model_type == 'CNN14':
         model = Cnn14(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
+    else:
+        # model = Wavegram_Logmel_Cnn14(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
+        #             mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
+        raise ValueError('Bad model type: %s' % model_type)
     
     model.to(device)
     

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from models import (Mlp, Cnn, Cnn14)
+from models import (Mlp, Cnn, Cnn14, Wavegram_Logmel_Cnn14)
 from eval import evaluate
 import config
 from data import (read_ensemble_data, EventDataSet)
@@ -60,6 +60,9 @@ def train(args):
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     elif model_type == 'MLP':
         model = Mlp(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
+                    mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
+    elif model_type == 'Wavegram_Logmel_CNN14':
+        model = Wavegram_Logmel_Cnn14(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
                     mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
     else:
         model = Cnn14(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
@@ -158,11 +161,12 @@ def train(args):
 
             loss = criterion(framewise_output.view(batch_size*frames_num, classes_num).float(), 
                             target.view(batch_size*frames_num, classes_num).float())
+            
+            optimizer.zero_grad()
             loss.backward()
-            print(f'Iter: {cur}, Loss: {loss}')
+            # print(f'Iter: {cur}, Loss: {loss}')
 
             optimizer.step()
-            optimizer.zero_grad()
 
             if (cur + 1) % 100 == 0:
                 test_statistics = evaluate(model, test_loader)

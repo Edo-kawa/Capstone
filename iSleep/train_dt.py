@@ -9,6 +9,7 @@ from models import (iSleepEventDetector)
 # from eval import evaluate
 import config
 from data import (read_ensemble_data)
+from eval import (compute_detection_accuracy)
 
 def train(args):
     """Args:
@@ -39,26 +40,23 @@ def train(args):
     model.fit(train_samples['data'], train_targets)
 
     eval_preds = model.predict(eval_samples['data'])
+    move_pred_num, move_target_num, cough_pred_num, cough_target_num, \
+        snoring_pred_num, snoring_target_num = compute_detection_accuracy(eval_preds, eval_targets, isDT=True)
 
-    onehot_eval_targets = onehot_eval_targets.reshape(-1, 4)
-    eval_ap = average_precision_score(onehot_eval_targets, eval_preds, average=None)
-    eval_auc = roc_auc_score(onehot_eval_targets, eval_preds, average=None)
+    print(f'move score: {move_pred_num / move_target_num},\n\
+            cough pred num: {cough_pred_num}, cough target num: {cough_target_num}, cough score: {cough_pred_num / cough_target_num}, \n\
+            snoring pred num: {snoring_pred_num}, snoring target num: {snoring_target_num}, snoring score: {snoring_pred_num / snoring_target_num}')
     
     model.fit(eval_samples['data'], eval_targets)
 
     test_preds = model.predict(test_samples['data'])
+    move_pred_num, move_target_num, cough_pred_num, cough_target_num, \
+        snoring_pred_num, snoring_target_num = compute_detection_accuracy(test_preds, test_targets, isDT=True)
 
-    onehot_test_targets = onehot_test_targets.reshape(-1, 4)
-    test_ap = average_precision_score(onehot_test_targets, test_preds, average=None)
-    test_auc = roc_auc_score(onehot_test_targets, test_preds, average=None)
+    print(f'move score: {move_pred_num / move_target_num},\n\
+            cough pred num: {cough_pred_num}, cough target num: {cough_target_num}, cough score: {cough_pred_num / cough_target_num}, \n\
+            snoring pred num: {snoring_pred_num}, snoring target num: {snoring_target_num}, snoring score: {snoring_pred_num / snoring_target_num}')
 
-    eval_statistics = {'average_precision': eval_ap, 'roc_auc': eval_auc}
-    test_statistics = {'average_precision': test_ap, 'roc_auc': test_auc}
-
-    print(f'Eval AP: {eval_ap}, ROC-AUC: {eval_auc}')
-    print(f'Test AP: {test_ap}, ROC-AUC: {test_auc}')
-
-    return eval_statistics, test_statistics
 
 if __name__ == '__main__':
     

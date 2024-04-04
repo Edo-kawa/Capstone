@@ -85,15 +85,15 @@ def read_ensemble_data(data_dir, sample_rate, model_type):
             (waveform, _) = librosa.core.load(audio_path, sr=sample_rate, mono=True)
         
             if i < eval_index:
-                train_samples['data'].append(float32_to_int16(waveform))
+                train_samples['data'].append(waveform)
                 train_samples['target'].append(target)
             
             elif i < test_index:
-                eval_samples['data'].append(float32_to_int16(waveform))
+                eval_samples['data'].append(waveform)
                 eval_samples['target'].append(target)
             
             else:
-                test_samples['data'].append(float32_to_int16(waveform))
+                test_samples['data'].append(waveform)
                 test_samples['target'].append(target)
 
     return train_samples, eval_samples, test_samples

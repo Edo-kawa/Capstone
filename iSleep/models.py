@@ -24,11 +24,11 @@ def init_bn(bn):
     bn.weight.data.fill_(1.)
 
 class iSleepEventDetector():
-    def __init__(self, window_size=3200, hop_size=3200, classification_head=DecisionTreeClassifier()):
+    def __init__(self, window_size=3200, hop_size=3200):
         self.noise_features = None
         self.window_size = window_size
         self.hop_size = hop_size
-        self.classification_head = classification_head
+        self.classification_head = DecisionTreeClassifier()
     
     def update_noise_features(self, new_features):
         new_features -= self.noise_features
@@ -47,7 +47,7 @@ class iSleepEventDetector():
         low_band, high_band = alpha * frame[0], alpha * frame[0]
         rms_low, rms_high = low_band**2, high_band**2
 
-        for i in range(1, len(frame)):
+        for i in range(1, frame_length):
             # low_band[i] = low_band[i-1] + self.alpha*(frame[i] - frame[i-1])
             # high_band[i] = self.alpha*(high_band[i-1] + frame[i] - frame[i-1])
             low_band += alpha*(frame[i] - frame[i-1])
@@ -58,7 +58,7 @@ class iSleepEventDetector():
         rms_low = np.sqrt(rms_low/frame_length)
         rms_high = np.sqrt(rms_high/frame_length)
         
-        return rms_low / rms_high if rms_high != 0 else 0
+        return rms_low / rms_high
 
     def compute_noise_features(self, noise_frames, frame_length):
         noise_rms = np.sqrt(np.sum(noise_frames**2, axis=1)/frame_length)
@@ -95,18 +95,23 @@ class iSleepEventDetector():
         windows = self.framing(input)    # (batch_size, frames_num, frame_length)
 
         samples_num, frames_num, frame_length = windows.shape
+
+        windows = windows.reshape(samples_num*5, int(frames_num/5), frame_length)
+        targets = targets.reshape(samples_num*5, int(frames_num/5))
         stds = np.std(windows, axis=2)
         
-        stds_mean, stds_min = np.mean(stds, axis=1).reshape(samples_num, 1), np.min(stds, axis=1).reshape(samples_num, 1)
+        stds_mean, stds_min = np.mean(stds, axis=1).reshape(samples_num*5, 1), np.min(stds, axis=1).reshape(samples_num*5, 1)
         stds = (stds - stds_mean) / (stds_mean - stds_min)
 
-        vars = stds**2
-        noise_frames = windows[vars < 0.5]
+        vars = np.var(stds, axis=1)
+        
+        if np.any(vars < 0.5):
+            noise_windows = windows[vars < 0.5]
+            noise_frames = noise_windows.reshape(-1, frame_length)
+            _ = self.compute_noise_features(noise_frames, frame_length)
 
-        _ = self.compute_noise_features(noise_frames, frame_length)
-
-        non_noise_frames = windows[vars >= 0.5]
-        non_noise_targets = targets[vars >= 0.5]
+        non_noise_frames = windows[vars >= 0.5].reshape(-1, frame_length)
+        non_noise_targets = targets[vars >= 0.5].reshape(-1)
 
         non_noise_features = self.compute_non_noise_features(non_noise_frames, frame_length)
 
@@ -114,43 +119,44 @@ class iSleepEventDetector():
 
         return
     
-    def predict(self, input, transform=False):
+    def predict(self, input):
         """
         Input: (batch_size, data_length)
         Output: (batch_size*frames_num, classes_num)"""
 
         windows = self.framing(input)
         samples_num, frames_num, frame_length = windows.shape
-        stds = np.std(windows, axis=2)
-        preds = np.zeros((samples_num, frames_num, 4))
+        windows = windows.reshape(samples_num*5, int(frames_num/5), frame_length)
 
-        # result = np.zeros((samples_num, frames_num, 4), dtype=int)
+        stds = np.std(windows, axis=2)
+        preds = np.zeros((samples_num*5, int(frames_num/5)))
+
+        # result = np.zeros((samples_num, frames_num), dtype=int)
         
-        stds_mean, stds_min = np.mean(stds, axis=1).reshape(samples_num, 1), np.min(stds, axis=1).reshape(samples_num, 1)
+        stds_mean, stds_min = np.mean(stds, axis=1).reshape(samples_num*5, 1), np.min(stds, axis=1).reshape(samples_num*5, 1)
         stds = (stds - stds_mean) / (stds_mean - stds_min)
 
-        vars = stds**2
+        vars = np.var(stds, axis=1)
 
-        non_noise_frames = windows[vars >= 0.5]
-        non_noise_features = self.compute_non_noise_features(non_noise_frames, frame_length)
+        if np.any(vars < 0.5):
+            noise_windows = windows[vars < 0.5]
+            noise_frames = noise_windows.reshape(-1, frame_length)
+            _ = self.compute_noise_features(noise_frames, frame_length)
 
-        preds[vars < 0.5, 0] = 1
+        non_noise_windows = windows[vars >= 0.5]
 
-        preds[vars >= 0.5] = self.classification_head.predict_proba(non_noise_features)
+        temp = []
+        for non_noise_window in non_noise_windows:
+            non_noise_features = self.compute_non_noise_features(non_noise_window, frame_length)
+            temp.append(self.classification_head.predict(non_noise_features))
 
-        # preds = np.argmax(preds, axis=2)
-        preds = preds.reshape(-1, 4)
-
-        if transform:
-            noise_frames = windows[vars < 0.5]
-            noise_features = self.compute_noise_features(noise_frames, frame_length)
-            self.update_noise_features(noise_features)
+        preds[vars >= 0.5] = np.asarray(temp)
 
         # for sample_ind in range(samples_num):
         #     for frame_ind in range(frames_num):
         #         result[sample_ind, frame_ind, preds[sample_ind, frame_ind]] = 1
 
-        return preds
+        return preds.reshape(samples_num, frames_num)
 
     
 

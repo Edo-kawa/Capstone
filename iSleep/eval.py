@@ -1,48 +1,61 @@
+import numpy as np
 import torch
 from scipy import ndimage
 from sklearn import metrics
 from functions import (move_data_to_device, generate_framewise_target)
 
-def framewise_misclassification_handling(framewise_outputs):
-    temp = torch.argmax(framewise_outputs, dim=2).numpy()
+def get_consecutive_frames(framewise_output, class_id):
+    data = np.flatnonzero(framewise_output == class_id)
+    return np.split(data, np.where(np.diff(data) != 1)[0]+1)
+
+def framewise_misclassification_handling(framewise_outputs, isDT=False):
+    temp = framewise_outputs if isDT else torch.argmax(framewise_outputs, dim=2).numpy()
 
     # Apply opening operator with diameter=5
     # Single or continuous event frames can be filtered out 
     # if the number of these continuous frames is less than the operator diameter
-    opening_result = ndimage.grey_erosion(temp, size=5)
-    opening_result = ndimage.grey_dilation(opening_result, size=5)
+    opening_result = ndimage.grey_erosion(temp, size=(1, 5))
+    opening_result = ndimage.grey_dilation(opening_result, size=(1, 5))
 
     # Apply closing operator with diameter=5
     # to connect those event areas with narrow gaps between them
-    closing_result = ndimage.grey_dilation(opening_result, size=5)
-    closing_result = ndimage.grey_erosion(closing_result, size=5)
+    closing_result = ndimage.grey_dilation(opening_result, size=(1, 5))
+    closing_result = ndimage.grey_erosion(closing_result, size=(1, 5))
 
     # Apply dilation operator with diameter=5
     # This will result in an expansion of 2 frames on both ends of the event frame sequences
-    dilation_result = ndimage.grey_dilation(closing_result, size=5)
+    dilation_result = ndimage.grey_dilation(closing_result, size=(1, 5))
 
-    return torch.from_numpy(dilation_result)
+    return dilation_result if isDT else torch.from_numpy(dilation_result)
 
-def compute_detection_accuracy(framewise_output, target):
-    # Compute FDA for frames related to 'move'
-    FDA_correct_num = int((framewise_output[target == 2] == 2).sum())
-    FDA_target_num = int((target == 2).sum())
-    move_FDA = FDA_correct_num / FDA_target_num
+def compute_detection_accuracy(preds, targets, isDT=False):
+    samples_num = preds.shape[0]
+    preds = framewise_misclassification_handling(preds, isDT=isDT)
 
-    # Compute EDA for frames related to 'snoring' and 'cough'
-    pred_events = torch.unique_consecutive(framewise_output[framewise_output != 0])
-    target_events = torch.unique_consecutive(target[target != 0])
+    move_FDA_up = move_FDA_down = cough_EDA_up = cough_EDA_down = snoring_EDA_up = snoring_EDA_down = 0
 
-    cough_pred_num = (pred_events == 1).sum()
-    snoring_pred_num = (pred_events == 3).sum()
+    for sample_id in range(samples_num):
+        pred, target = preds[sample_id], targets[sample_id]
 
-    cough_target_num = (target_events == 1).sum()
-    snoring_target_num = (target_events == 3).sum()
+        # Compute FDA for frames related to 'move'
+        move_target_ind = (target == 2)
+        move_FDA_down += move_target_ind.sum()
+        move_FDA_up += (pred[move_target_ind] == 2).sum()
 
-    cough_EDA = min(cough_pred_num / cough_target_num, 1.)
-    snoring_EDA = min(snoring_pred_num / snoring_target_num, 1.)
+        # Compute EDA for frames related to 'snoring' and 'cough'
+        cough_target_ind = get_consecutive_frames(target, 1)
+        snoring_target_ind = get_consecutive_frames(target, 3)
 
-    return move_FDA, cough_EDA, snoring_EDA
+        cough_EDA_down += len(cough_target_ind)
+        snoring_EDA_down += len(snoring_target_ind)
+        
+        for cough_event in cough_target_ind:
+            cough_EDA_up += 1 if 1 in pred[cough_event] else 0
+        
+        for snoring_event in snoring_target_ind:
+            snoring_EDA_up += 1 if 3 in pred[snoring_event] else 0
+
+    return move_FDA_up, move_FDA_down, cough_EDA_up, cough_EDA_down, snoring_EDA_up, snoring_EDA_down
 
 def evaluate(model, data_loader):
     """Args:
@@ -59,21 +72,14 @@ def evaluate(model, data_loader):
             model.eval()
             framewise_outputs = model(waveform, None)
 
-    (batch_size, frames_num, classes_num) = framewise_outputs.shape
-
-    smoothed_outputs = framewise_misclassification_handling(framewise_outputs)
     targets = torch.argmax(targets, dim=2)
 
-    result = [0, 0, 0]
+    move_FDA_up, move_FDA_down, cough_EDA_up, cough_EDA_down, \
+        snoring_EDA_up, snoring_EDA_down = compute_detection_accuracy(framewise_outputs, targets)
 
-    for batch_id in range(batch_size):
-        temp = compute_detection_accuracy(smoothed_outputs[batch_id], targets[batch_id])
-        result[0] += temp[0]
-        result[1] += temp[1]
-        result[2] += temp[2]
-
-    statistics = {'move_FDA': result[0]/batch_size, 'cough_EDA': result[1]/batch_size, 
-                  'snoring_EDA': result[2]/batch_size}
+    statistics = {'move_FDA_up': move_FDA_up, 'move_FDA_down': move_FDA_down,
+                  'cough_EDA_up': cough_EDA_up, 'cough_EDA_down': cough_EDA_down,
+                  'snoring_EDA_up': snoring_EDA_up, 'snoring_EDA_down': snoring_EDA_down}
 
     return statistics
 

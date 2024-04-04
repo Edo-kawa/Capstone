@@ -131,12 +131,16 @@ def train(args):
             optimizer.step()
             optimizer.zero_grad()
 
-            if (cur + 1) % 100 == 0:
+            if (cur + 0) % 100 == 0:
+                print(f'Iter: {cur}, Loss: {loss}')
+
                 eval_statistics = evaluate(model, eval_loader)
 
                 checkpoint['eval_statistics'] = eval_statistics
 
-                print(f'cur_iter: {cur}, eval_mAP: {np.mean(eval_statistics["average_precision"])}, roc_auc: {eval_statistics["roc_auc"]}')
+                print(f'cur_iter: {cur}, move score: {eval_statistics["move_FDA_up"] / eval_statistics["move_FDA_down"]}, \
+                        cough score: {eval_statistics["cough_EDA_up"] / eval_statistics["cough_EDA_down"]}, \
+                        snoring score: {eval_statistics["snoring_EDA_up"] / eval_statistics["snoring_EDA_down"]}')
 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur
@@ -170,12 +174,16 @@ def train(args):
             optimizer.step()
 
             if (cur + 1) % 100 == 0:
+                print(f'Iter: {cur}, Loss: {loss}')
+
                 test_statistics = evaluate(model, test_loader)
 
                 checkpoint['test_statistics'] = test_statistics
 
-                print(f'cur_iter: {cur}, test_mAP: {np.mean(test_statistics["average_precision"])}, roc_auc: {test_statistics["roc_auc"]}')
-
+                print(f'cur_iter: {cur}, move score: {test_statistics["move_FDA_up"] / test_statistics["move_FDA_down"]}, \
+                        cough score: {test_statistics["cough_EDA_up"] / test_statistics["cough_EDA_down"]}, \
+                        snoring score: {test_statistics["snoring_EDA_up"] / test_statistics["snoring_EDA_down"]}')
+                
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur
                 checkpoint_path = f'./checkpoints/event_detectors/{model_type}.pth'

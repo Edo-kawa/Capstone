@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from models import (Mlp, Cnn, Cnn14, Wavegram_Logmel_Cnn14)
+from models import (Mlp, Cnn, Cnn14, ReconLoss)
 from eval import evaluate
 import config
 from data import (read_ensemble_data, EventDataSet)
@@ -53,7 +53,7 @@ def train(args):
 
     num_workers = 2
     classes_num = config.classes_num
-    criterion = F.binary_cross_entropy
+    criterion = ReconLoss()
 
     if model_type == 'CNN':
         model = Cnn(sample_rate=sample_rate, window_size=window_size, hop_size=hop_size,
@@ -122,25 +122,25 @@ def train(args):
 
             framewise_output = model(waveform, mixup_lambda)
             (batch_size, frames_num, classes_num) = framewise_output.shape
-
-            loss = criterion(framewise_output.view(batch_size*frames_num, classes_num).float(), 
-                            target.view(batch_size*frames_num, classes_num).float())
+            
+            loss = criterion(framewise_output.float(), target.float())
             loss.backward()
-            print(f'Iter: {cur}, Loss: {loss}')
+            # print(f'Iter: {cur}, Loss: {loss}')
 
             optimizer.step()
             optimizer.zero_grad()
 
-            if (cur + 0) % 100 == 0:
+            if (cur + 1) % 100 == 0:
                 print(f'Iter: {cur}, Loss: {loss}')
 
                 eval_statistics = evaluate(model, eval_loader)
 
                 checkpoint['eval_statistics'] = eval_statistics
 
-                print(f'cur_iter: {cur}, move score: {eval_statistics["move_FDA_up"] / eval_statistics["move_FDA_down"]}, \
-                        cough score: {eval_statistics["cough_EDA_up"] / eval_statistics["cough_EDA_down"]}, \
-                        snoring score: {eval_statistics["snoring_EDA_up"] / eval_statistics["snoring_EDA_down"]}')
+                print(f'Move: pred num = {eval_statistics["move_FDA_up"]}, target num = {eval_statistics["move_FDA_down"]}, total score = {eval_statistics["move_FDA_up"] / eval_statistics["move_FDA_down"]}')
+                print(f'Cough: pred num = {eval_statistics["cough_EDA_up"]}, target num = {eval_statistics["cough_EDA_down"]}, total score = {eval_statistics["cough_EDA_up"] / eval_statistics["cough_EDA_down"]}')
+                print(f'Snore: pred num = {eval_statistics["snoring_EDA_up"]}, target num = {eval_statistics["snoring_EDA_down"]}, total score = {eval_statistics["snoring_EDA_up"] / eval_statistics["snoring_EDA_down"]}')
+                print(f'Avg precision = {eval_statistics["average_precision"]}, roc auc score = {eval_statistics["roc_auc_score"]}')
 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur
@@ -164,8 +164,7 @@ def train(args):
             framewise_output = model(waveform, mixup_lambda)
             (batch_size, frames_num, classes_num) = framewise_output.shape
 
-            loss = criterion(framewise_output.view(batch_size*frames_num, classes_num).float(), 
-                            target.view(batch_size*frames_num, classes_num).float())
+            loss = criterion(framewise_output.float(), target.float())
             
             optimizer.zero_grad()
             loss.backward()
@@ -180,9 +179,10 @@ def train(args):
 
                 checkpoint['test_statistics'] = test_statistics
 
-                print(f'cur_iter: {cur}, move score: {test_statistics["move_FDA_up"] / test_statistics["move_FDA_down"]}, \
-                        cough score: {test_statistics["cough_EDA_up"] / test_statistics["cough_EDA_down"]}, \
-                        snoring score: {test_statistics["snoring_EDA_up"] / test_statistics["snoring_EDA_down"]}')
+                print(f'Move: pred num = {test_statistics["move_FDA_up"]}, target num = {test_statistics["move_FDA_down"]}, total score = {test_statistics["move_FDA_up"] / test_statistics["move_FDA_down"]}')
+                print(f'Cough: pred num = {test_statistics["cough_EDA_up"]}, target num = {test_statistics["cough_EDA_down"]}, total score = {test_statistics["cough_EDA_up"] / test_statistics["cough_EDA_down"]}')
+                print(f'Snore: pred num = {test_statistics["snoring_EDA_up"]}, target num = {test_statistics["snoring_EDA_down"]}, total score = {test_statistics["snoring_EDA_up"] / test_statistics["snoring_EDA_down"]}')
+                print(f'Avg precision = {test_statistics["average_precision"]}, roc auc score = {test_statistics["roc_auc_score"]}')
                 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur

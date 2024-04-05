@@ -122,7 +122,7 @@ class iSleepEventDetector():
     def predict(self, input):
         """
         Input: (batch_size, data_length)
-        Output: (batch_size*frames_num, classes_num)"""
+        Output: (batch_size, frames_num)"""
 
         windows = self.framing(input)
         samples_num, frames_num, frame_length = windows.shape
@@ -158,7 +158,24 @@ class iSleepEventDetector():
 
         return preds.reshape(samples_num, frames_num)
 
-    
+class ReconLoss(nn.Module):
+    def __init__(self, classes_num=4):
+        super(ReconLoss, self).__init__()
+        
+        self.classes_num = classes_num
+        
+    def forward(self, preds, targets):
+        targets_labels = torch.argmax(targets, dim=2)
+        
+        noise_target_inds = (targets_labels == 0)
+        non_noise_target_inds = (targets_labels != 0)
+        
+        noise_pred_loss = F.binary_cross_entropy_with_logits(preds[noise_target_inds], targets[noise_target_inds])
+        non_noise_pred_loss = F.binary_cross_entropy_with_logits(preds[non_noise_target_inds], targets[non_noise_target_inds])
+        
+        loss = 0.7 * non_noise_pred_loss + 0.3 * noise_pred_loss
+        
+        return loss
 
 class Mlp(nn.Module):
     def __init__(self, sample_rate=32000, window_size=3200, hop_size=3200, mel_bins=64, fmin=50, 
@@ -231,7 +248,7 @@ class Mlp(nn.Module):
         x = F.relu_(self.fc3(x))
         x = F.dropout(x, p=0.5, training=self.training)
 
-        framewise_output = torch.sigmoid(self.fc_audioset(x))   # (batch_size, time_steps, classes_num)
+        framewise_output = self.fc_audioset(x)   # (batch_size, time_steps, classes_num)
         
         # clipwise_output = torch.argmax(framewise_output, dim=2) \
         #     .mode().values.unsqueeze(1)                         # (batch_size, 1)
@@ -327,7 +344,7 @@ class Cnn(nn.Module):
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.5, training=self.training)
 
-        framewise_output = torch.sigmoid(self.fc_audioset(x))   # (batch_size, time_steps, classes_num)
+        framewise_output = self.fc_audioset(x)   # (batch_size, time_steps, classes_num)
         
         # clipwise_output = torch.argmax(framewise_output, dim=2) \
         #     .mode().values.unsqueeze(1)                         # (batch_size, 1)
@@ -535,7 +552,7 @@ class Wavegram_Logmel_Cnn14(nn.Module):
         x = x1 + x2
         x = F.dropout(x, p=0.5, training=self.training)
         x = F.relu_(self.fc1(x))
-        segmentwise_output = torch.sigmoid(self.fc_audioset(x))
+        segmentwise_output = self.fc_audioset(x)
         
         framewise_output = interpolate(segmentwise_output, self.interpolate_ratio)
         framewise_output = pad_framewise_output(framewise_output, frames_num)
@@ -630,7 +647,7 @@ class Cnn14(nn.Module):
         x = x.transpose(1, 2)
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.5, training=self.training)
-        segmentwise_output = torch.sigmoid(self.fc_audioset(x))
+        segmentwise_output = self.fc_audioset(x)
 
         # Get framewise output
         framewise_output = interpolate(segmentwise_output, self.interpolate_ratio)

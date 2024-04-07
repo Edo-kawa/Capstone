@@ -110,17 +110,16 @@ def train(args):
                 mixup_lambda = None
 
             ensemble_output = model(waveform, mixup_lambda)
-            (batch_size, frames_num, classes_num) = ensemble_output.shape
 
-            loss = criterion(ensemble_output, target)
+            loss = criterion(ensemble_output, target, training=True)
             
             optimizer.zero_grad()
             loss.backward()
-            print(f'Iter: {cur}, Loss: {loss}')
 
             optimizer.step()
 
             if (cur + 1) % 100 == 0:
+                print(f'Iter: {cur}, Loss: {loss}')
                 eval_statistics = evaluate_ensemble(model, eval_loader)
                 checkpoint['eval_statistics'] = eval_statistics
 
@@ -146,17 +145,16 @@ def train(args):
                 mixup_lambda = None
 
             ensemble_output = model(waveform, mixup_lambda)
-            (batch_size, frames_num, classes_num) = ensemble_output.shape
 
-            loss = criterion(ensemble_output, target)
+            loss = criterion(ensemble_output, target, training=False)
             
             optimizer.zero_grad()
             loss.backward()
-            print(f'Iter: {cur}, Loss: {loss}')
 
             optimizer.step()
 
             if (cur + 1) % 100 == 0:
+                print(f'Iter: {cur}, Loss: {loss}')
                 test_statistics = evaluate_ensemble(model, test_loader)
                 checkpoint['test_statistics'] = test_statistics
 

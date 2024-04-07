@@ -50,7 +50,9 @@ class iSleepEventDetector():
         for i in range(1, frame_length):
             # low_band[i] = low_band[i-1] + self.alpha*(frame[i] - frame[i-1])
             # high_band[i] = self.alpha*(high_band[i-1] + frame[i] - frame[i-1])
-            low_band += alpha*(frame[i] - frame[i-1])
+            temp = low_band
+
+            low_band += alpha*(frame[i] - temp)
             high_band = alpha*(high_band + frame[i] - frame[i-1])
             rms_low += low_band**2
             rms_high += high_band**2

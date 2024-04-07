@@ -109,8 +109,8 @@ def process_label(label):
     """
     class_id, start_time, end_time = int(label[0]), float(label[1]), float(label[2])
 
-    center_time = (start_time + end_time) / 2
-    duration = end_time - start_time
+    center_time = (start_time + end_time) / 2.
+    duration = np.log(end_time - start_time)
 
     if duration < 1e-4:
         return False
@@ -147,7 +147,7 @@ def generate_framewise_target(labels):
 def generate_gt(labels, grid_num=10):
     """
     Input: (bbox_num, 1+1+1=3)
-    Output: (grid_num, [confidence, class_id, grid_offset, duration]*2=4*2=8)
+    Output: (grid_num, [confidence, class_id, grid_offset, duration] * 2 = 4*2 = 8)
     """
     # bbox_num = label.shape[0]
     # gt_conf = np.zeros([batch_size, grid_num*2])

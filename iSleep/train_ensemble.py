@@ -124,7 +124,7 @@ def train(args):
                 eval_statistics = evaluate_ensemble(model, eval_loader)
                 checkpoint['eval_statistics'] = eval_statistics
 
-                print(f'cur_iter: {cur}, eval_mAP: {np.mean(eval_statistics["average_precision"])}, roc_auc: {eval_statistics["roc_auc"]}')
+                print(f'cur_iter: {cur}, avg_precision: {eval_statistics["average_precision"]}, roc_auc: {eval_statistics["roc_auc"]}')
 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur
@@ -160,7 +160,7 @@ def train(args):
                 test_statistics = evaluate_ensemble(model, test_loader)
                 checkpoint['test_statistics'] = test_statistics
 
-                print(f'cur_iter: {cur}, test_mAP: {np.mean(test_statistics["average_precision"])}, roc_auc: {test_statistics["roc_auc"]}')
+                print(f'cur_iter: {cur}, avg_precision: {test_statistics["average_precision"]}, roc_auc: {test_statistics["roc_auc"]}')
 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur

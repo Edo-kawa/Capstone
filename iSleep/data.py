@@ -73,13 +73,13 @@ def read_ensemble_data(data_dir, sample_rate, model_type):
         audio_name = name + '.wav'
         audio_path = os.path.join(data_dir, audio_name)
 
-        target = labels_list[i][~np.isnan(labels_list[i])]
-        target = np.hsplit(target, indices_or_sections=len(target)/3)
+        bbox_list = labels_list[i][~np.isnan(labels_list[i])]
+        bboxes = np.hsplit(bbox_list, indices_or_sections=len(target)/3)
         
         if model_type != 'DetectNet':
-            target = generate_framewise_target(target)
+            target = generate_framewise_target(bboxes)
         else:
-            target = generate_gt(target)
+            target = generate_gt(bboxes)
 
         if os.path.isfile(audio_path):
             (waveform, _) = librosa.core.load(audio_path, sr=sample_rate, mono=True)
@@ -87,14 +87,17 @@ def read_ensemble_data(data_dir, sample_rate, model_type):
             if i < eval_index:
                 train_samples['data'].append(waveform)
                 train_samples['target'].append(target)
+                train_samples['bboxes'].append(bboxes)
             
             elif i < test_index:
                 eval_samples['data'].append(waveform)
                 eval_samples['target'].append(target)
+                eval_samples['bboxes'].append(bboxes)
             
             else:
                 test_samples['data'].append(waveform)
                 test_samples['target'].append(target)
+                test_samples['bboxes'].append(bboxes)
 
     return train_samples, eval_samples, test_samples
 
@@ -110,12 +113,17 @@ class EventDataSet(Dataset):
         waveform = self.samples['data'][index]
         target = self.samples['target'][index]
 
+        if self.samples.has_key('bboxes'):
+            bboxes = self.samples['bboxes'][index]
+        else:
+            bboxes = None
+
         waveform = int16_to_float32(waveform[:self.sample_length])
         waveform = self.resample(waveform)
 
         target = np.asarray(target)
 
-        return waveform, target
+        return waveform, target, bboxes
     
     def __len__(self):
         return len(self.samples['data'])

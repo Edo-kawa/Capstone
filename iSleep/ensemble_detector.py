@@ -53,12 +53,27 @@ def process_pred(pred):
             pred_dur[batch_id, grid_id*2] = pred[batch_id, grid_id, 1]
             pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 7]
 
-    return pred_conf.view(-1, 1), pred_cls.view(-1, 3), pred_offset.view(-1, 1), pred_dur.view(-1, 1)
+    return pred_conf, pred_cls.permute(0, 2, 1), pred_offset, pred_dur
     # return torch.from_numpy(pred_conf).float(), torch.from_numpy(pred_cls).float(), \
     #     torch.from_numpy(pred_offset).float(), torch.from_numpy(pred_dur).float()
 
+class MeanSquaredErrorWithLogitsLoss(nn.Module):
+    def __init__(self):
+        super(MeanSquaredErrorWithLogitsLoss, self).__init__()
+    
+    def forward(self, logits, targets, coord_scale=5.0, noobj_scale=1.0):
+        inputs = torch.clamp(torch.sigmoid(logits), min=1e-4, max=1.0 - 1e-4)
+
+        pos_id = (targets==1.0).float()
+        neg_id = (targets==0.0).float()
+        pos_loss = pos_id * (inputs - targets)**2
+        neg_loss = neg_id * (inputs)**2
+        loss = coord_scale * pos_loss + noobj_scale * neg_loss
+
+        return loss
+
 class EnsembleLoss(nn.Module):
-    def __init__(self, classes_num=3, noobj_scale=0.5, coord_scale=5.0):
+    def __init__(self, classes_num=3, noobj_scale=1.0, coord_scale=5.0):
         super(EnsembleLoss, self).__init__()
 
         self.classes_num = classes_num
@@ -71,39 +86,46 @@ class EnsembleLoss(nn.Module):
         target: (batch_size, grid_num, (1+1+1+1)*2=8)
         [confidence, class_id, grid_offset, duration]
         """
-        batch_size = pred.shape[0]
+        batch_size, grid_num = pred.shape[:-1]
         pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred)
 
-        gt_conf = target[:, :, [0, 4]].view(-1, 1)
-        gt_cls = target[:, :, [1, 5]].view(-1, 1)
-        gt_offset = target[:, :, [2, 6]].view(-1, 1)
-        gt_dur = target[:, :, [3, 7]].view(-1, 1)
+        gt_conf = target[:, :, [0, 4]].view(batch_size, grid_num*2, 1)
+        gt_cls = target[:, :, [1, 5]].view(batch_size, grid_num*2, 1).long()
+        gt_offset = target[:, :, [2, 6]].view(batch_size, grid_num*2, 1)
+        gt_dur = target[:, :, [3, 7]].view(batch_size, grid_num*2, 1)
 
-        obj_mask = (gt_conf == 1).float()
-        noobj_mask = (gt_conf == 0).float()
-        CELoss = nn.CrossEntropyLoss(reduction='none')
+        # obj_mask = (gt_conf == 1).float()
+        # noobj_mask = (gt_conf == 0).float()
+        MSELoss = nn.MSELoss(size_average=False)
+        CELoss = nn.CrossEntropyLoss(size_average=False)
+        MSEWithLogitsLoss = MeanSquaredErrorWithLogitsLoss()
+        BCEWithLogitsLoss = nn.BCEWithLogitsLoss(size_average=False)
 
-        conf_diff = (gt_conf - pred_conf)**2
-        offset_diff = (gt_offset - pred_offset)**2
-        dur_diff = (gt_dur**0.5 - pred_dur**0.5)**2
+        # conf_diff = (gt_conf - pred_conf)**2
+        # offset_diff = (gt_offset - pred_offset)**2
+        # dur_diff = (gt_dur**0.5 - pred_dur**0.5)**2
 
-        obj_conf_loss = obj_mask * conf_diff
-        noobj_conf_loss = noobj_mask * conf_diff
-        conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
+        # obj_conf_loss = obj_mask * conf_diff
+        # noobj_conf_loss = noobj_mask * conf_diff
+        # conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
+        conf_loss = MSEWithLogitsLoss(pred_conf, gt_conf, coord_scale=self.coord_scale, noobj_scale=self.noobj_scale) / batch_size
 
-        obj_gt_cls = obj_mask * gt_cls
-        obj_gt_cls = torch.eye(3)[obj_gt_cls.view(-1).long()]
-        obj_pred_cls = obj_mask.repeat(1, 3) * pred_cls
-        cls_loss = 0
-        for i in range(batch_size):
-            cls_loss += CELoss(obj_pred_cls[i], obj_gt_cls[i])
-        cls_loss /= batch_size
+        # obj_gt_cls = obj_mask * gt_cls
+        # obj_gt_cls = torch.eye(3)[obj_gt_cls.view(-1).long()]
+        # obj_pred_cls = obj_mask.repeat(1, 3) * pred_cls
+        # cls_loss = 0
+        # for i in range(batch_size):
+        #     cls_loss += CELoss(obj_pred_cls[i], obj_gt_cls[i])
+        # cls_loss /= batch_size
+        cls_loss = gt_conf * CELoss(pred_cls, gt_cls) / batch_size
 
-        obj_offset = obj_mask * offset_diff
-        offset_loss = (self.coord_scale * obj_offset.sum()) / batch_size
+        # obj_offset = obj_mask * offset_diff
+        # offset_loss = (self.coord_scale * obj_offset.sum()) / batch_size
+        offset_loss = gt_conf * BCEWithLogitsLoss(pred_offset, gt_offset) / batch_size
 
-        obj_dur = obj_mask * dur_diff
-        dur_loss = (self.coord_scale * obj_dur.sum()) / batch_size
+        # obj_dur = obj_mask * dur_diff
+        # dur_loss = (self.coord_scale * obj_dur.sum()) / batch_size
+        dur_loss = gt_conf * MSELoss(pred_dur, gt_dur) / batch_size
 
         loss = conf_loss + cls_loss + offset_loss + dur_loss
 
@@ -166,6 +188,10 @@ class DetectNet(nn.Module):
         ref = 1.0
         amin = 1e-10
         top_db = None
+
+        self.conf_thresh = thresh1
+        self.nms_thresh = thresh2
+        self.classes_num = classes_num
 
         self.bn0 = nn.BatchNorm1d(mel_bins)
 
@@ -246,11 +272,97 @@ class DetectNet(nn.Module):
         x = x.view(batch_size, int(classes_num * stride), int(grid_num / stride))
         
         return x
+    
+    def nms(self, offset_preds, dur_preds, scores):
+        """
+        Input: (grid_num*2, 1)
+        Output: List
+        """
+
+        offset = torch.sigmoid(offset_preds)
+        duration = torch.exp(dur_preds)
+
+        start_time = offset - (duration / 2.)
+        end_time = offset + (duration / 2.)
+
+        order = scores.argsort(descending=True)
+
+        keep = []                                             
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+
+            left_bound = torch.max(start_time[i], start_time[order[1:]])
+            right_bound = torch.min(end_time[i], end_time[order[1:]])
+
+            inter = torch.max(1e-10, right_bound - left_bound)
+            iou = inter / (dur_preds[i] + dur_preds[order[1:]] - inter)
+
+            inds = np.where(iou <= self.nms_thresh)[0]
+            order = order[inds + 1]
+
+        return keep
+
+    @torch.no_grad()
+    def postprocess(self, preds):
+        """
+        preds: (batch_size, grid_num=10, (1+1+1+classes_num)*2=12)
+        offset      [0, 6]
+        duration    [1, 7]
+        confidence  [2, 8]
+        class       [3:6, 9:]
+
+        Output: List (batch_size, bboxes_num<=grid_num*2, 4)
+        [confidence, offset, duration, class_id]
+        """
+        batch_size, grid_num = preds.shape[:-1]
+
+        conf_preds = preds[:, :, [2, 8]].view(batch_size, grid_num*2, 1)
+        cls_preds = preds[:, :, [3, 4, 5, 9, 10, 11]].view(batch_size, grid_num*2, 3)
+        offset_preds = preds[:, :, [0, 6]].view(batch_size, grid_num*2, 1)
+        dur_preds = preds[:, :, [1, 7]].view(batch_size, grid_num*2, 1)
+
+        grids = torch.cat((torch.arange(10).view(-1, 1), torch.arange(10).view(-1, 1)), dim=-1).view(-1, 1)
+        offset_preds += grids
+
+        scores = torch.sigmoid(conf_preds) * torch.softmax(cls_preds, dim=-1)   # (batch_size, grid_num*2, classes_num=3)
+
+        result = []
+        for batch_id in range(batch_size):
+            batch_scores = scores[batch_id]
+            batch_labels = torch.argmax(batch_scores, dim=1)
+            batch_scores = batch_scores[(np.arange(grid_num*2), batch_labels)]
+
+            keep = torch.where(batch_scores >= self.conf_thresh)
+
+            keep_offset = offset_preds[keep]
+            keep_dur = dur_preds[keep]
+            keep_scores = batch_scores[keep]
+            keep_labels = batch_labels[keep]
+
+            keep = torch.zeros(grid_num*2)
+            for class_id in range(self.classes_num):
+                inds = torch.where(keep_labels == class_id)[0]
+                if len(inds) == 0:
+                    continue
+                class_offset = keep_offset[inds]
+                class_dur = keep_dur[inds]
+                class_scores = keep_scores[inds]
+
+                class_keep = self.nms(class_offset, class_dur, class_scores)
+                keep[inds[class_keep]] = 1
+            
+            keep = torch.where(keep > 0)
+            keep_bboxes = torch.cat((keep_scores[keep], keep_offset[keep], keep_dur[keep], keep_labels[keep]), dim=1)
+
+            result.append(keep_bboxes)
+        
+        return result
 
     def forward(self, input, mixup_lambda=None):
         """
         Input: (batch_size, data_length)
-        Output: (batch_size, grid_num=10, (1+1+1)*2+classes_num=9)"""
+        Output: (batch_size, grid_num=10, (1+1+1+classes_num)*2=12)"""
 
         x = self.spectrogram_extractor(input)   # (batch_size, 1, time_steps, freq_bins)
         x = self.logmel_extractor(x)    # (batch_size, 1, time_steps, mel_bins)
@@ -284,5 +396,11 @@ class DetectNet(nn.Module):
         x = torch.concat((x2, x1), dim=1)   # (batch_size, 1280, 10)
         
         x = self.conv8(x)       # (batch_size, 12, 10)
+
+        x = x.transpose(1, 2)
+
+        if not self.training:
+            pred = self.postprocess(x)
+            return x, pred
         
-        return x.transpose(2, 1)
+        return x

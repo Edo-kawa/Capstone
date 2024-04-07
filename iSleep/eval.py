@@ -136,7 +136,7 @@ def evaluate_ensemble(model, data_loader):
     preds = []
 
     for i, (waveform, target) in enumerate(data_loader):
-        waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device), move_data_to_device(bboxes, device)
+        waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, 'cpu')
 
         with torch.no_grad():
             model.eval()
@@ -151,11 +151,14 @@ def evaluate_ensemble(model, data_loader):
         #       class       [3:6, 9:]
         
         # pred: (batch_size, bboxes_num, 4) <=> (confidence, offset, duration, class_id)
+        
+        output = output.to('cpu')
 
-        cls_targets = target[:, :, [1, 5]].view(-1, 1).int()
-        cls_targets = torch.eye(3)[cls_targets]
+        conf_targets = target[:, :, [0, 4]].view(-1, 1)
+        cls_targets = target[:, :, [1, 5]].view(-1).int()
+        cls_targets = conf_targets * torch.eye(3)[cls_targets]
 
-        conf_outputs = output[:, :, [2, 8]].view(-1, 1)
+        conf_outputs = conf_targets * output[:, :, [2, 8]].view(-1, 1)
         cls_outputs = conf_outputs * output[:, :, [3, 4, 5, 9, 10, 11]].view(-1, 3)
 
         avg_precision += metrics.average_precision_score(cls_targets, cls_outputs, average=None)

@@ -28,16 +28,16 @@ def compute_IOU(c1, d1, c2, d2):
 
     return 0
 
-def process_pred(pred):
+def process_pred(pred, device):
     """
     Input: (batch_size, grid_num=10, (1+1+1+3)*2=12)
     Output: (confidence, class_vector, grid_offset, duration)
     """
     batch_size, grid_num = pred.shape[:-1]
-    pred_conf = torch.zeros([batch_size, grid_num*2])
-    pred_cls = torch.zeros([batch_size, grid_num*2, 3])
-    pred_offset = torch.zeros([batch_size, grid_num*2])
-    pred_dur = torch.zeros([batch_size, grid_num*2])
+    pred_conf = torch.zeros([batch_size, grid_num*2]).to(device)
+    pred_cls = torch.zeros([batch_size, grid_num*2, 3]).to(device)
+    pred_offset = torch.zeros([batch_size, grid_num*2]).to(device)
+    pred_dur = torch.zeros([batch_size, grid_num*2]).to(device)
 
     for batch_id in range(batch_size):
         for grid_id in range(grid_num):
@@ -53,7 +53,7 @@ def process_pred(pred):
             pred_dur[batch_id, grid_id*2] = pred[batch_id, grid_id, 1]
             pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 7]
 
-    return pred_conf, pred_cls.permute(0, 2, 1), pred_offset, pred_dur
+    return pred_conf, pred_cls, pred_offset, pred_dur
     # return torch.from_numpy(pred_conf).float(), torch.from_numpy(pred_cls).float(), \
     #     torch.from_numpy(pred_offset).float(), torch.from_numpy(pred_dur).float()
 
@@ -80,52 +80,60 @@ class EnsembleLoss(nn.Module):
         self.noobj_scale = noobj_scale
         self.coord_scale = coord_scale
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, training=False):
         """
         pred: (batch_size, grid_num, (1+1+1+3)*2=12)
         target: (batch_size, grid_num, (1+1+1+1)*2=8)
         [confidence, class_id, grid_offset, duration]
         """
         batch_size, grid_num = pred.shape[:-1]
-        pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred)
+        device = torch.device('cuda') if training else torch.device('cpu')
+        pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred, device)
 
-        gt_conf = target[:, :, [0, 4]].view(batch_size, grid_num*2, 1)
-        gt_cls = target[:, :, [1, 5]].view(batch_size, grid_num*2, 1).long()
-        gt_offset = target[:, :, [2, 6]].view(batch_size, grid_num*2, 1)
-        gt_dur = target[:, :, [3, 7]].view(batch_size, grid_num*2, 1)
+        gt_conf = target[:, :, [0, 4]].view(batch_size, grid_num*2)
+        gt_cls = target[:, :, [1, 5]].view(batch_size, grid_num*2).long()
+        gt_offset = target[:, :, [2, 6]].view(batch_size, grid_num*2)
+        gt_dur = target[:, :, [3, 7]].view(batch_size, grid_num*2)
 
-        # obj_mask = (gt_conf == 1).float()
-        # noobj_mask = (gt_conf == 0).float()
-        MSELoss = nn.MSELoss(size_average=False)
-        CELoss = nn.CrossEntropyLoss(size_average=False)
-        MSEWithLogitsLoss = MeanSquaredErrorWithLogitsLoss()
-        BCEWithLogitsLoss = nn.BCEWithLogitsLoss(size_average=False)
+        obj_mask = (gt_conf == 1).float()
+        noobj_mask = (gt_conf == 0).float()
+        # MSELoss = nn.MSELoss(reduction='none')
+        CELoss = nn.CrossEntropyLoss()
+        # MSEWithLogitsLoss = MeanSquaredErrorWithLogitsLoss()
+        # BCEWithLogitsLoss = nn.BCEWithLogitsLoss(reduction='none')
 
-        # conf_diff = (gt_conf - pred_conf)**2
-        # offset_diff = (gt_offset - pred_offset)**2
-        # dur_diff = (gt_dur**0.5 - pred_dur**0.5)**2
+        conf_diff = (gt_conf - pred_conf)**2
+        offset_diff = (gt_offset - pred_offset)**2
+        dur_diff = (gt_dur - pred_dur)**2
 
-        # obj_conf_loss = obj_mask * conf_diff
-        # noobj_conf_loss = noobj_mask * conf_diff
-        # conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
-        conf_loss = MSEWithLogitsLoss(pred_conf, gt_conf, coord_scale=self.coord_scale, noobj_scale=self.noobj_scale) / batch_size
+        obj_conf_loss = obj_mask * conf_diff
+        noobj_conf_loss = noobj_mask * conf_diff
+        conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
+        # conf_loss = MSEWithLogitsLoss(pred_conf, gt_conf, coord_scale=self.coord_scale, noobj_scale=self.noobj_scale)
+        # conf_loss = conf_loss.sum() / batch_size
 
         # obj_gt_cls = obj_mask * gt_cls
-        # obj_gt_cls = torch.eye(3)[obj_gt_cls.view(-1).long()]
-        # obj_pred_cls = obj_mask.repeat(1, 3) * pred_cls
-        # cls_loss = 0
+        obj_gt_cls = gt_cls[obj_mask > 0]
+        obj_gt_cls = torch.eye(3).cuda()[obj_gt_cls.long()]
+        # obj_pred_cls = obj_mask.unsqueeze(-1).repeat(1, 1, 3) * pred_cls
+        obj_pred_cls = pred_cls[obj_mask > 0]
+        cls_loss = CELoss(obj_pred_cls, obj_gt_cls)
+        cls_loss = cls_loss.sum() / batch_size
+        
         # for i in range(batch_size):
-        #     cls_loss += CELoss(obj_pred_cls[i], obj_gt_cls[i])
+            # cls_loss += CELoss(obj_pred_cls[i], obj_gt_cls[i])
         # cls_loss /= batch_size
-        cls_loss = gt_conf * CELoss(pred_cls, gt_cls) / batch_size
+        # cls_loss = gt_conf * CELoss(pred_cls, gt_cls)
 
-        # obj_offset = obj_mask * offset_diff
-        # offset_loss = (self.coord_scale * obj_offset.sum()) / batch_size
-        offset_loss = gt_conf * BCEWithLogitsLoss(pred_offset, gt_offset) / batch_size
+        obj_offset = obj_mask * offset_diff
+        offset_loss = (self.coord_scale * obj_offset.sum()) / batch_size
+        # offset_loss = gt_conf * BCEWithLogitsLoss(pred_offset, gt_offset)
+        # offset_loss = offset_loss.sum() / batch_size
 
-        # obj_dur = obj_mask * dur_diff
-        # dur_loss = (self.coord_scale * obj_dur.sum()) / batch_size
-        dur_loss = gt_conf * MSELoss(pred_dur, gt_dur) / batch_size
+        obj_dur = obj_mask * dur_diff
+        dur_loss = (self.coord_scale * obj_dur.sum()) / batch_size
+        # dur_loss = gt_conf * MSELoss(pred_dur, gt_dur)
+        # dur_loss = dur_loss.sum() / batch_size
 
         loss = conf_loss + cls_loss + offset_loss + dur_loss
 
@@ -279,23 +287,20 @@ class DetectNet(nn.Module):
         Output: List
         """
 
-        offset = torch.sigmoid(offset_preds)
-        duration = torch.exp(dur_preds)
+        start_time = offset_preds - (dur_preds / 2.)
+        end_time = offset_preds + (dur_preds / 2.)
 
-        start_time = offset - (duration / 2.)
-        end_time = offset + (duration / 2.)
+        order = scores.argsort()[::-1]
 
-        order = scores.argsort(descending=True)
-
-        keep = []                                             
+        keep = []
         while order.size > 0:
             i = order[0]
             keep.append(i)
 
-            left_bound = torch.max(start_time[i], start_time[order[1:]])
-            right_bound = torch.min(end_time[i], end_time[order[1:]])
+            left_bound = np.maximum(start_time[i], start_time[order[1:]])
+            right_bound = np.minimum(end_time[i], end_time[order[1:]])
 
-            inter = torch.max(1e-10, right_bound - left_bound)
+            inter = np.maximum(1e-10, right_bound - left_bound)
             iou = inter / (dur_preds[i] + dur_preds[order[1:]] - inter)
 
             inds = np.where(iou <= self.nms_thresh)[0]
@@ -319,30 +324,41 @@ class DetectNet(nn.Module):
 
         conf_preds = preds[:, :, [2, 8]].view(batch_size, grid_num*2, 1)
         cls_preds = preds[:, :, [3, 4, 5, 9, 10, 11]].view(batch_size, grid_num*2, 3)
-        offset_preds = preds[:, :, [0, 6]].view(batch_size, grid_num*2, 1)
-        dur_preds = preds[:, :, [1, 7]].view(batch_size, grid_num*2, 1)
+        offset_preds = preds[:, :, [0, 6]].view(batch_size, grid_num*2)
+        dur_preds = preds[:, :, [1, 7]].view(batch_size, grid_num*2)
 
-        grids = torch.cat((torch.arange(10).view(-1, 1), torch.arange(10).view(-1, 1)), dim=-1).view(-1, 1)
-        offset_preds += grids
+        offset_preds = torch.sigmoid(offset_preds)
+        dur_preds = torch.exp(dur_preds)
 
         scores = torch.sigmoid(conf_preds) * torch.softmax(cls_preds, dim=-1)   # (batch_size, grid_num*2, classes_num=3)
+        
+        scores = scores.to('cpu').numpy()
+        offset_preds = offset_preds.to('cpu').numpy()
+        dur_preds = dur_preds.to('cpu').numpy()
+        
+        # grids = torch.cat((torch.arange(10).view(-1, 1), torch.arange(10).view(-1, 1)), dim=-1).view(-1, 1)
+        grids = np.concatenate((np.arange(10).reshape(-1, 1), np.arange(10).reshape(-1, 1)), axis=-1).reshape(-1)
+        offset_preds += grids
 
         result = []
         for batch_id in range(batch_size):
             batch_scores = scores[batch_id]
-            batch_labels = torch.argmax(batch_scores, dim=1)
+            batch_offset = offset_preds[batch_id]
+            batch_dur = dur_preds[batch_id]
+            
+            batch_labels = np.argmax(batch_scores, axis=1)
             batch_scores = batch_scores[(np.arange(grid_num*2), batch_labels)]
 
-            keep = torch.where(batch_scores >= self.conf_thresh)
+            keep = np.where(batch_scores >= self.conf_thresh)
 
-            keep_offset = offset_preds[keep]
-            keep_dur = dur_preds[keep]
+            keep_offset = batch_offset[keep]
+            keep_dur = batch_dur[keep]
             keep_scores = batch_scores[keep]
             keep_labels = batch_labels[keep]
 
-            keep = torch.zeros(grid_num*2)
+            keep = np.zeros(grid_num*2)
             for class_id in range(self.classes_num):
-                inds = torch.where(keep_labels == class_id)[0]
+                inds = np.where(keep_labels == class_id)[0]
                 if len(inds) == 0:
                     continue
                 class_offset = keep_offset[inds]
@@ -352,8 +368,8 @@ class DetectNet(nn.Module):
                 class_keep = self.nms(class_offset, class_dur, class_scores)
                 keep[inds[class_keep]] = 1
             
-            keep = torch.where(keep > 0)
-            keep_bboxes = torch.cat((keep_scores[keep], keep_offset[keep], keep_dur[keep], keep_labels[keep]), dim=1)
+            keep = np.where(keep > 0)
+            keep_bboxes = np.concatenate((keep_scores[keep], keep_offset[keep], keep_dur[keep], keep_labels[keep]), axis=-1)
 
             result.append(keep_bboxes)
         
@@ -370,7 +386,7 @@ class DetectNet(nn.Module):
         if self.training:
             x = self.spec_augmenter(x)  # (batch_size, 1, time_steps, mel_bins)
 
-        x = x.transpose(3, 1)   # (batch_size, mel_bins, time_steps, 1)
+        x = x.transpose(1, 3)   # (batch_size, mel_bins, time_steps, 1)
         x = x.squeeze(3)    # (batch_size, mel_bins, time_steps)
 
         x = self.bn0(x)

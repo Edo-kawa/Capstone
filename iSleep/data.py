@@ -115,7 +115,7 @@ class EventDataSet(Dataset):
 
         target = np.asarray(target)
 
-        return waveform, target, bboxes
+        return waveform, target
     
     def __len__(self):
         return len(self.samples['data'])

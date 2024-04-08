@@ -155,14 +155,16 @@ def evaluate_ensemble(model, data_loader):
         output = output.to('cpu')
 
         conf_targets = target[:, :, [0, 4]].view(-1, 1)
+        obj_mask = (conf_targets > 0).view(-1)
+        
         cls_targets = target[:, :, [1, 5]].view(-1).int()
         cls_targets = conf_targets * torch.eye(3)[cls_targets]
 
-        conf_outputs = conf_targets * output[:, :, [2, 8]].view(-1, 1)
+        conf_outputs = output[:, :, [2, 8]].view(-1, 1)
         cls_outputs = conf_outputs * output[:, :, [3, 4, 5, 9, 10, 11]].view(-1, 3)
 
-        avg_precision += metrics.average_precision_score(cls_targets, cls_outputs, average=None)
-        roc_auc += metrics.roc_auc_score(cls_targets, cls_outputs, average=None)
+        avg_precision += metrics.average_precision_score(cls_targets[obj_mask], cls_outputs[obj_mask], average=None)
+        roc_auc += metrics.roc_auc_score(cls_targets[obj_mask], cls_outputs[obj_mask], average=None)
 
         preds.append(pred)
         iters += 1

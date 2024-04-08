@@ -1,0 +1,33 @@
+git branch --set-upstream-to=https://github.com/Edo-kawa/Capstone.git master
+
+DT:
+move score: 0.21224489795918366
+cough pred num: 5, cough target num: 10, cough score: 0.5
+snoring pred num: 2, snoring target num: 11, snoring score: 0.18181818181818182
+average precision: [0.43256997 0.180542   0.25315646 0.2591664 ], roc auc score: [0.66212121 0.53874891 0.51767806 0.50495677]
+
+MLP：
+cur_iter: 4999, eval_mAP: 0.613691308852784, roc_auc: [0.47628857 0.86218878 0.90133329 0.83863185]
+cur_iter: 2499, test_mAP: 0.31996894950013466, roc_auc: [0.10377897 0.39999323 0.64740641 0.85539222]
+
+Move: pred num = 9, target num = 245, total score = 0.036734693877551024
+Cough: pred num = 6, target num = 10, total score = 0.6
+Snore: pred num = 1, target num = 11, total score = 0.09090909090909091
+Avg precision = [0.47222222 0.26521439 0.34326999 0.33611583], roc auc score = [0.60833333 0.63607595 0.55756724 0.52832402]
+
+CNN：
+cur_iter: 4999, eval_mAP: 0.7844888044275504, roc_auc: [0.64350495 0.98428065 0.94825555 0.94925776]
+cur_iter: 2499, test_mAP: 0.5390015565770304, roc_auc: [0.66134581 0.74315975 0.71455061 0.88137795]
+
+Move: pred num = 44, target num = 245, total score = 0.17959183673469387
+Cough: pred num = 6, target num = 10, total score = 0.6
+Snore: pred num = 0, target num = 11, total score = 0.0
+Avg precision = [0.60854368 0.73138975 0.40962818 0.38317033], roc auc score = [0.78102718 0.90666436 0.60614678 0.55363942]
+
+CNN14:
+Move: pred num = 60, target num = 245, total score = 0.24489795918367346
+Cough: pred num = 5, target num = 10, total score = 0.5
+Snore: pred num = 0, target num = 11, total score = 0.0
+Avg precision = [0.41008209 0.30443257 0.4834314  0.26268936], roc auc score = [0.60227273 0.7747076  0.69428571 0.51687344]
+
+export LD_LIBRARY_PATH=/usr/local/cuda-12.0/lib64/stubs/:/usr/local/cuda-12.0/lib64:/usr/local/cuda-12.0/cudnn/lib:$LD_LIBRARY_PATH

@@ -28,34 +28,34 @@ def compute_IOU(c1, d1, c2, d2):
 
     return 0
 
-def process_pred(pred, device):
+def process_pred(pred):
     """
     Input: (batch_size, grid_num=10, (1+1+1+3)*2=12)
     Output: (confidence, class_vector, grid_offset, duration)
     """
     batch_size, grid_num = pred.shape[:-1]
-    pred_conf = torch.zeros([batch_size, grid_num*2]).to(device)
-    pred_cls = torch.zeros([batch_size, grid_num*2, 3]).to(device)
-    pred_offset = torch.zeros([batch_size, grid_num*2]).to(device)
-    pred_dur = torch.zeros([batch_size, grid_num*2]).to(device)
+    # pred_conf = torch.zeros([batch_size, grid_num*2]).to(device)
+    # pred_cls = torch.zeros([batch_size, grid_num*2, 3]).to(device)
+    # pred_offset = torch.zeros([batch_size, grid_num*2]).to(device)
+    # pred_dur = torch.zeros([batch_size, grid_num*2]).to(device)
 
-    for batch_id in range(batch_size):
-        for grid_id in range(grid_num):
-            pred_conf[batch_id, grid_id*2] = pred[batch_id, grid_id, 2]
-            pred_conf[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 8]
+    # for batch_id in range(batch_size):
+    #     for grid_id in range(grid_num):
+    #         pred_conf[batch_id, grid_id*2] = pred[batch_id, grid_id, 2]
+    #         pred_conf[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 8]
 
-            pred_cls[batch_id, grid_id*2] = pred[batch_id, grid_id, 3:6]
-            pred_cls[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 9:]
+    #         pred_cls[batch_id, grid_id*2] = pred[batch_id, grid_id, 3:6]
+    #         pred_cls[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 9:]
 
-            pred_offset[batch_id, grid_id*2] = pred[batch_id, grid_id, 0]
-            pred_offset[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 6]
+    #         pred_offset[batch_id, grid_id*2] = pred[batch_id, grid_id, 0]
+    #         pred_offset[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 6]
 
-            pred_dur[batch_id, grid_id*2] = pred[batch_id, grid_id, 1]
-            pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 7]
+    #         pred_dur[batch_id, grid_id*2] = pred[batch_id, grid_id, 1]
+    #         pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 7]
 
-    return pred_conf, pred_cls, pred_offset, pred_dur
-    # return torch.from_numpy(pred_conf).float(), torch.from_numpy(pred_cls).float(), \
-    #     torch.from_numpy(pred_offset).float(), torch.from_numpy(pred_dur).float()
+    # return pred_conf, pred_cls, pred_offset, pred_dur
+    return pred[:, :, [2, 8]].view(batch_size, grid_num*2), pred[:, :, [3, 4, 5, 9, 10, 11]].view(batch_size, grid_num*2, 3), \
+        pred[:, :, [0, 6]].view(batch_size, grid_num*2), pred[:, :, [1, 7]].view(batch_size, grid_num*2)
 
 class MeanSquaredErrorWithLogitsLoss(nn.Module):
     def __init__(self):
@@ -87,18 +87,18 @@ class EnsembleLoss(nn.Module):
         [confidence, class_id, grid_offset, duration]
         """
         batch_size, grid_num = pred.shape[:-1]
-        device = torch.device('cuda') if training else torch.device('cpu')
-        pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred, device)
+        # device = torch.device('cuda') if training else torch.device('cpu')
+        pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred)
 
         gt_conf = target[:, :, [0, 4]].view(batch_size, grid_num*2)
         gt_cls = target[:, :, [1, 5]].view(batch_size, grid_num*2).long()
         gt_offset = target[:, :, [2, 6]].view(batch_size, grid_num*2)
         gt_dur = target[:, :, [3, 7]].view(batch_size, grid_num*2)
 
-        obj_mask = (gt_conf == 1).float()
-        noobj_mask = (gt_conf == 0).float()
+        obj_mask = (gt_conf > 0).float()
+        noobj_mask = (gt_conf == 0.).float()
         # MSELoss = nn.MSELoss(reduction='none')
-        CELoss = nn.CrossEntropyLoss()
+        CELoss = nn.CrossEntropyLoss(reduction='none')
         # MSEWithLogitsLoss = MeanSquaredErrorWithLogitsLoss()
         # BCEWithLogitsLoss = nn.BCEWithLogitsLoss(reduction='none')
 

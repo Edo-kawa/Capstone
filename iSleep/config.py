@@ -2,7 +2,7 @@ import numpy as np
 
 # sample_rate = 32000
 
-clip_duration = 4     # Audio clips are 4-second
+clip_duration = 10     # Audio clips are 10-second
 ensemble_duration = 10
 frames_num_per_sec = 10
 

@@ -6,8 +6,7 @@ CUDA_VISIBLE_DEVICES=0 python3 iSleep/train.py train \
     --mel_bins=64 \
     --fmin=50 \
     --fmax=14000 \
-    --model_type='CNN14' \
-    --mixup \
+    --model_type='MLP' \
     --batch_size=32 \
     --learning_rate=1e-3 \
     --num_iters=10000 \

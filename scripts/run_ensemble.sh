@@ -7,7 +7,6 @@ CUDA_VISIBLE_DEVICES=0 python3 iSleep/train_ensemble.py train \
     --fmin=50 \
     --fmax=14000 \
     --model_type='DetectNet' \
-    --mixup \
     --batch_size=32 \
     --learning_rate=1e-3 \
     --num_iters=10000 \

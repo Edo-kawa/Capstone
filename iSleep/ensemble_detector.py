@@ -21,9 +21,9 @@ def compute_IOU(c1, d1, c2, d2):
         c1, c2 = c2, c1
         d1, d2 = d2, d1
 
-    intersection = c1 - c2 + (d1 + d2) / 2
+    intersection = c1 - c2 + (d1 + d2)*0.5
     if intersection:
-        conjunction = c2 - c1 + (d1 + d2) / 2
+        conjunction = c2 - c1 + (d1 + d2)*0.5
         return intersection / conjunction
 
     return 0
@@ -54,8 +54,8 @@ def process_pred(pred):
     #         pred_dur[batch_id, grid_id*2+1] = pred[batch_id, grid_id, 7]
 
     # return pred_conf, pred_cls, pred_offset, pred_dur
-    return pred[:, :, [2, 8]].view(batch_size, grid_num*2), pred[:, :, [3, 4, 5, 9, 10, 11]].view(batch_size, grid_num*2, 3), \
-        pred[:, :, [0, 6]].view(batch_size, grid_num*2), pred[:, :, [1, 7]].view(batch_size, grid_num*2)
+    return pred[:, :, [2, 8]].view(-1), pred[:, :, [3, 4, 5, 9, 10, 11]].view(-1, 3), \
+        pred[:, :, [0, 6]].view(-1), pred[:, :, [1, 7]].view(-1)
 
 class MeanSquaredErrorWithLogitsLoss(nn.Module):
     def __init__(self):
@@ -72,70 +72,70 @@ class MeanSquaredErrorWithLogitsLoss(nn.Module):
 
         return loss
 
-class EnsembleLoss(nn.Module):
-    def __init__(self, classes_num=3, noobj_scale=1.0, coord_scale=5.0):
-        super(EnsembleLoss, self).__init__()
+class DetectLoss(nn.Module):
+    def __init__(self, classes_num=3, noobj_scale=1.0, coord_scale=2.0):
+        super(DetectLoss, self).__init__()
 
         self.classes_num = classes_num
         self.noobj_scale = noobj_scale
         self.coord_scale = coord_scale
+        
+    def compute_IoU(self, gt_offset, gt_dur, pred_offset, pred_dur):
+        batch_size = gt_offset.shape[0]
+        
+        gt_x1 = gt_offset - 0.5 * gt_dur
+        gt_x2 = gt_offset + 0.5 * gt_dur
+        
+        pred_x1 = pred_offset - 0.5 * pred_dur
+        pred_x2 = pred_offset + 0.5 * pred_dur
+        
+        left_bound = torch.max(gt_x1, pred_x1).to('cuda')
+        right_bound = torch.min(gt_x2, pred_x2).to('cuda')
+        intersection = torch.max(torch.zeros(batch_size).to('cuda'), right_bound-left_bound).to('cuda')
+        iou = intersection / (gt_dur + pred_dur - intersection + 1e-6)
+        
+        return iou
 
-    def forward(self, pred, target, training=False):
+    def forward(self, pred, target):
         """
         pred: (batch_size, grid_num, (1+1+1+3)*2=12)
         target: (batch_size, grid_num, (1+1+1+1)*2=8)
         [confidence, class_id, grid_offset, duration]
         """
         batch_size, grid_num = pred.shape[:-1]
-        # device = torch.device('cuda') if training else torch.device('cpu')
         pred_conf, pred_cls, pred_offset, pred_dur = process_pred(pred)
+        grids = torch.cat((torch.arange(10).view(-1, 1), torch.arange(10).view(-1, 1)), dim=-1).view(-1).repeat(batch_size).to('cuda')
 
-        gt_conf = target[:, :, [0, 4]].view(batch_size, grid_num*2)
-        gt_cls = target[:, :, [1, 5]].view(batch_size, grid_num*2).long()
-        gt_offset = target[:, :, [2, 6]].view(batch_size, grid_num*2)
-        gt_dur = target[:, :, [3, 7]].view(batch_size, grid_num*2)
+        gt_conf = target[:, :, [0, 4]].view(-1)
+        gt_cls = target[:, :, [1, 5]].view(-1).long()
+        gt_offset = target[:, :, [2, 6]].view(-1)
+        gt_dur = target[:, :, [3, 7]].view(-1)
 
-        obj_mask = (gt_conf > 0).float()
-        noobj_mask = (gt_conf == 0.).float()
-        # MSELoss = nn.MSELoss(reduction='none')
-        CELoss = nn.CrossEntropyLoss(reduction='none')
-        # MSEWithLogitsLoss = MeanSquaredErrorWithLogitsLoss()
-        # BCEWithLogitsLoss = nn.BCEWithLogitsLoss(reduction='none')
+        obj_mask = (gt_conf > 0)
+        num_obj = obj_mask.sum()
 
-        conf_diff = (gt_conf - pred_conf)**2
-        offset_diff = (gt_offset - pred_offset)**2
-        dur_diff = (gt_dur - pred_dur)**2
+        conf_loss = F.binary_cross_entropy_with_logits(pred_conf, gt_conf, reduction='none')
+        conf_loss = conf_loss.sum() / num_obj
+        # conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
 
-        obj_conf_loss = obj_mask * conf_diff
-        noobj_conf_loss = noobj_mask * conf_diff
-        conf_loss = (obj_conf_loss.sum() + self.noobj_scale * noobj_conf_loss.sum()) / batch_size
-        # conf_loss = MSEWithLogitsLoss(pred_conf, gt_conf, coord_scale=self.coord_scale, noobj_scale=self.noobj_scale)
-        # conf_loss = conf_loss.sum() / batch_size
-
-        # obj_gt_cls = obj_mask * gt_cls
-        obj_gt_cls = gt_cls[obj_mask > 0]
+        obj_gt_cls = gt_cls[obj_mask]
         obj_gt_cls = torch.eye(3).cuda()[obj_gt_cls.long()]
-        # obj_pred_cls = obj_mask.unsqueeze(-1).repeat(1, 1, 3) * pred_cls
         obj_pred_cls = pred_cls[obj_mask > 0]
-        cls_loss = CELoss(obj_pred_cls, obj_gt_cls)
-        cls_loss = cls_loss.sum() / batch_size
+        cls_loss = F.binary_cross_entropy_with_logits(obj_pred_cls, obj_gt_cls, reduction='none')
+        cls_loss = cls_loss.sum() / num_obj
         
-        # for i in range(batch_size):
-            # cls_loss += CELoss(obj_pred_cls[i], obj_gt_cls[i])
-        # cls_loss /= batch_size
-        # cls_loss = gt_conf * CELoss(pred_cls, gt_cls)
+        gt_offset = gt_offset + grids
+        pred_offset = pred_offset + grids
+        
+        obj_gt_offset = gt_offset[obj_mask]
+        obj_pred_offset = pred_offset[obj_mask]
+        obj_gt_dur = gt_dur[obj_mask]
+        obj_pred_dur = pred_dur[obj_mask]
+        bbox_loss = self.compute_IoU(obj_gt_offset, obj_gt_dur, obj_pred_offset, obj_pred_dur)
+        bbox_loss = (num_obj - bbox_loss.sum()) / num_obj
 
-        obj_offset = obj_mask * offset_diff
-        offset_loss = (self.coord_scale * obj_offset.sum()) / batch_size
-        # offset_loss = gt_conf * BCEWithLogitsLoss(pred_offset, gt_offset)
-        # offset_loss = offset_loss.sum() / batch_size
-
-        obj_dur = obj_mask * dur_diff
-        dur_loss = (self.coord_scale * obj_dur.sum()) / batch_size
-        # dur_loss = gt_conf * MSELoss(pred_dur, gt_dur)
-        # dur_loss = dur_loss.sum() / batch_size
-
-        loss = conf_loss + cls_loss + offset_loss + dur_loss
+        loss = conf_loss + cls_loss + self.coord_scale * bbox_loss
+        loss /= (self.coord_scale + 2)
 
         return loss
 
@@ -216,13 +216,13 @@ class DetectNet(nn.Module):
 
         # Backbone
         # 100 -> 50
-        self.conv1 = Conv1dBlock(in_channels=64, out_channels=128, num_layers=1)
+        self.conv1 = Conv1dBlock(in_channels=64, out_channels=128, num_layers=3)
 
         # 50 -> 25
         self.conv2 = Conv1dBlock(in_channels=128, out_channels=256, num_layers=3)
         
         # 25 -> 12
-        self.conv3 = Conv1dBlock(in_channels=256, out_channels=512, num_layers=5)
+        self.conv3 = Conv1dBlock(in_channels=256, out_channels=512, num_layers=3)
 
         # 12 -> 10
         self.conv4 = nn.Sequential(
@@ -231,7 +231,7 @@ class DetectNet(nn.Module):
                         nn.ReLU()
                     )
         
-        self.conv5 = Conv1dBlock(in_channels=512, out_channels=1024, num_layers=5)
+        self.conv5 = Conv1dBlock(in_channels=512, out_channels=1024, num_layers=3)
 
         self.conv6 = nn.Sequential(
                         nn.Conv1d(in_channels=1024, out_channels=1024, kernel_size=3, stride=1, padding=1),
@@ -254,10 +254,10 @@ class DetectNet(nn.Module):
         
         # Detection Head
         self.conv8 = nn.Sequential(
-                        nn.Conv1d(in_channels=1280, out_channels=1024, kernel_size=3, stride=1, padding=1),
-                        nn.BatchNorm1d(1024),
+                        nn.Conv1d(in_channels=1280, out_channels=400, kernel_size=3, stride=1, padding=1),
+                        nn.BatchNorm1d(400),
                         nn.ReLU(),
-                        nn.Conv1d(in_channels=1024, out_channels=12, kernel_size=1, stride=1),
+                        nn.Conv1d(in_channels=400, out_channels=12, kernel_size=1, stride=1),
                         nn.BatchNorm1d(12),
                         nn.ReLU()
                     )
@@ -393,7 +393,8 @@ class DetectNet(nn.Module):
 
         # Mixup on spectrogram
         if self.training and mixup_lambda is not None:
-            x = do_mixup(x, mixup_lambda)
+            x_mixup = do_mixup(x, mixup_lambda)
+            x = torch.cat([x, x_mixup])
         
         x = self.conv1(x, pool_size=2, pool_type='max')
         x = self.conv2(x, pool_size=2, pool_type='max')
@@ -403,7 +404,7 @@ class DetectNet(nn.Module):
         x1 = self.reorg(x1)     # (batch_size, 256, 10)
 
         x = self.conv3(x, pool_size=2, pool_type='max')
-        x = self.conv4(x)
+        x = self.conv4(x)       # (batch_size, 512, 10)
         x = self.conv5(x, pool_size=None, pool_type=None)
         x = self.conv6(x)
 

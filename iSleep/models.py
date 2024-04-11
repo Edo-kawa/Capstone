@@ -170,10 +170,10 @@ class ReconLoss(nn.Module):
         targets_labels = torch.argmax(targets, dim=2)
         
         noise_target_inds = (targets_labels == 0)
-        non_noise_target_inds = (targets_labels != 0)
+        non_noise_target_inds = (targets_labels > 0)
         
-        noise_pred_loss = F.binary_cross_entropy(preds[noise_target_inds], targets[noise_target_inds])
-        non_noise_pred_loss = F.binary_cross_entropy(preds[non_noise_target_inds], targets[non_noise_target_inds])
+        noise_pred_loss = F.cross_entropy(preds[noise_target_inds], targets[noise_target_inds])
+        non_noise_pred_loss = F.cross_entropy(preds[non_noise_target_inds], targets[non_noise_target_inds])
         
         loss = 0.7 * non_noise_pred_loss + 0.3 * noise_pred_loss
         
@@ -238,7 +238,7 @@ class Mlp(nn.Module):
         
         # Mixup on spectrogram
         if self.training and mixup_lambda is not None:
-            x = do_mixup(x, mixup_lambda)
+            x = torch.cat([x, do_mixup(x, mixup_lambda)])
 
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.5, training=self.training)
@@ -286,6 +286,7 @@ class Cnn(nn.Module):
         self.bn1 = nn.BatchNorm1d(mel_bins*2)
         self.bn2 = nn.BatchNorm1d(mel_bins*4)
         self.bn3 = nn.BatchNorm1d(mel_bins*8)
+        self.bn4 = nn.BatchNorm1d(mel_bins*16)
 
         self.conv1 = nn.Conv1d(in_channels=64, out_channels=128,
                                kernel_size=3, stride=1, padding=1)
@@ -293,9 +294,11 @@ class Cnn(nn.Module):
                                kernel_size=3, stride=1, padding=1)
         self.conv3 = nn.Conv1d(in_channels=256, out_channels=512,
                                kernel_size=3, stride=1, padding=1)
+        self.conv4 = nn.Conv1d(in_channels=512, out_channels=1024,
+                               kernel_size=3, stride=1, padding=1)
 
-        self.fc1 = nn.Linear(512, 512, bias=True)
-        self.fc_audioset = nn.Linear(512, classes_num, bias=True)
+        self.fc1 = nn.Linear(1024, 400, bias=True)
+        self.fc_audioset = nn.Linear(400, classes_num, bias=True)
         
         self.init_weight()
 
@@ -304,9 +307,11 @@ class Cnn(nn.Module):
         init_bn(self.bn1)
         init_bn(self.bn2)
         init_bn(self.bn3)
+        init_bn(self.bn4)
         init_layer(self.conv1)
         init_layer(self.conv2)
         init_layer(self.conv3)
+        init_layer(self.conv4)
         init_layer(self.fc1)
         init_layer(self.fc_audioset)
 
@@ -328,7 +333,7 @@ class Cnn(nn.Module):
 
         # Mixup on spectrogram
         if self.training and mixup_lambda is not None:
-            x = do_mixup(x, mixup_lambda)
+            x = torch.cat([x, do_mixup(x, mixup_lambda)])
         
         x = F.relu_(self.bn1(self.conv1(x)))
         x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
@@ -337,6 +342,9 @@ class Cnn(nn.Module):
         x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
         x = F.dropout(x, p=0.5, training=self.training)
         x = F.relu_(self.bn3(self.conv3(x)))
+        x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = F.relu_(self.bn4(self.conv4(x)))
         x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
         x = F.dropout(x, p=0.5, training=self.training)
 
@@ -529,7 +537,7 @@ class Cnn14(nn.Module):
 
         # Mixup on spectrogram
         if self.training and mixup_lambda is not None:
-            x = do_mixup(x, mixup_lambda)
+            x = torch.cat([x, do_mixup(x, mixup_lambda)])
 
         x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)

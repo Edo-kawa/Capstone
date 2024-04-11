@@ -138,9 +138,8 @@ def generate_framewise_target(labels):
         right_frame_id = ceil(label[2] * config.frames_num_per_sec) - 1         # label[2] (end_time) != 0
         left_frame_id = floor(label[1] * config.frames_num_per_sec)             # label[1] (start_time) != 10
 
-        for frame_id in range(left_frame_id, right_frame_id+1):
-            framewise_target[frame_id, 0] = 0
-            framewise_target[frame_id, class_id] = 1
+        framewise_target[left_frame_id:right_frame_id+1, 0] = 0
+        framewise_target[left_frame_id:right_frame_id+1, class_id] = 1
 
     return framewise_target
 

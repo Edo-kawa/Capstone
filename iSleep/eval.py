@@ -42,9 +42,10 @@ def framewise_misclassification_handling(framewise_outputs):
 
     return framewise_outputs
 
-def compute_detection_accuracy(preds, targets):
+def compute_detection_accuracy(preds, targets, isDetectNet=False):
     samples_num = preds.shape[0]
-    preds = framewise_misclassification_handling(np.int64(preds))
+    if not isDetectNet:
+        preds = framewise_misclassification_handling(np.int64(preds))
 
     move_FDA_up = move_FDA_down = cough_EDA_up = cough_EDA_down = snoring_EDA_up = snoring_EDA_down = 0
 
@@ -61,13 +62,13 @@ def compute_detection_accuracy(preds, targets):
         # Compute EDA for frames related to 'snoring' and 'cough'
         cough_target_ind = get_consecutive_frames(target, 1)
         snoring_target_ind = get_consecutive_frames(target, 3)
-        cough_EDA_down += len(cough_target_ind)
-        snoring_EDA_down += len(snoring_target_ind)
         
         for cough_event in cough_target_ind:
+            cough_EDA_down += 1 if len(cough_event) > 0 else 0
             cough_EDA_up += 1 if 1 in pred[cough_event] else 0
         
         for snoring_event in snoring_target_ind:
+            snoring_EDA_down += 1 if len(snoring_event) > 0 else 0
             snoring_EDA_up += 1 if 3 in pred[snoring_event] else 0
 
     return move_FDA_up, move_FDA_down, cough_EDA_up, cough_EDA_down, snoring_EDA_up, snoring_EDA_down
@@ -115,7 +116,26 @@ def evaluate(model, data_loader):
 
     return statistics
 
-def evaluate_ensemble(model, data_loader):
+def bbox2framewise(pred):
+    """Args:
+        pred: (batch_size, bboxes_num, 4) <=> (confidence, offset, duration, class_id)
+    """
+    
+    batch_size = len(pred)
+    frames_num = 100
+    framewise_outputs = np.zeros([batch_size, frames_num, 3])
+    
+    for batch_id in range(batch_size):
+        for bbox in pred[batch_id]:
+            start = int(np.max([0, bbox[1]-0.5*bbox[2]]))
+            end = int(np.min(frames_num-1, bbox[1]+0.5*bbox[2]))
+            
+            framewise_outputs[batch_id, start:end+1, int(bbox[3])] = 1
+    
+    return framewise_outputs
+    
+
+def evaluate_DetectNet(model, data_loader):
     """Args:
     model: torch.nn.Module
     data_loader: torch.utils.data.DataLoader

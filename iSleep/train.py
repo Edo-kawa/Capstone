@@ -78,7 +78,7 @@ def train(args):
     TestSet = EventDataSet(sr=sample_rate, duration=config.ensemble_duration, samples=test_samples)
 
     train_loader = torch.utils.data.DataLoader(dataset=TrainSet,
-                                              batch_size=batch_size if not if_mixup else batch_size*2, 
+                                              batch_size=batch_size if not if_mixup else int(batch_size*1.5), 
                                               shuffle=True,
                                               num_workers=num_workers, pin_memory=True)
     eval_loader = torch.utils.data.DataLoader(dataset=EvalSet,
@@ -116,7 +116,8 @@ def train(args):
             if if_mixup:
                 mixup_lambda = mixup.get_lambda(waveform.shape[0])
                 mixup_lambda = move_data_to_device(mixup_lambda, device)
-                target = do_mixup(target, mixup_lambda)
+                mixup_result = do_mixup(target, mixup_lambda)
+                target = torch.cat([target, mixup_result])
             else:
                 mixup_lambda = None
 
@@ -157,7 +158,8 @@ def train(args):
             if if_mixup:
                 mixup_lambda = mixup.get_lambda(waveform.shape[0])
                 mixup_lambda = move_data_to_device(mixup_lambda, device)
-                target = do_mixup(target, mixup_lambda)
+                mixup_result = do_mixup(target, mixup_lambda)
+                target = torch.cat([target, mixup_result])
             else:
                 mixup_lambda = None
 

@@ -10,10 +10,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
 
-from eval import evaluate_ensemble
+from eval import evaluate_DetectNet
 import config
 from data import (read_ensemble_data, EventDataSet)
-from ensemble_detector import EnsembleLoss, DetectNet
+from ensemble_detector import DetectLoss, DetectNet
 from functions import (move_data_to_device, Mixup, do_mixup)
 
 def train(args):
@@ -53,7 +53,7 @@ def train(args):
 
     num_workers = 2
     classes_num = config.ensemble_classes_num
-    criterion = EnsembleLoss(classes_num=classes_num, noobj_scale=0.5, coord_scale=0.5)
+    criterion = DetectLoss(classes_num=classes_num, noobj_scale=0.5, coord_scale=2.0)
 
     model = DetectNet(thresh1=0.1, thresh2=0.5, sample_rate=sample_rate, window_size=window_size,
                       hop_size=hop_size, mel_bins=mel_bins, fmin=fmin, fmax=fmax, classes_num=classes_num)
@@ -66,7 +66,7 @@ def train(args):
     TestSet = EventDataSet(sr=sample_rate, samples=test_samples)
 
     train_loader = torch.utils.data.DataLoader(dataset=TrainSet,
-                                              batch_size=batch_size if not if_mixup else batch_size*2, 
+                                              batch_size=batch_size if not if_mixup else int(batch_size*1.5), 
                                               shuffle=True,
                                               num_workers=num_workers, pin_memory=True)
     eval_loader = torch.utils.data.DataLoader(dataset=EvalSet,
@@ -90,7 +90,7 @@ def train(args):
         cur_iter = 0
     
     if cur_iter >= num_iters:
-        return
+        cur_iter = num_iters
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, 
         betas=(0.9, 0.999), eps=1e-08, weight_decay=0., amsgrad=True)
@@ -105,13 +105,14 @@ def train(args):
             if if_mixup:
                 mixup_lambda = mixup.get_lambda(waveform.shape[0])
                 mixup_lambda = move_data_to_device(mixup_lambda, device)
-                target = do_mixup(target, mixup_lambda)
+                mixup_result = do_mixup(target, mixup_lambda)
+                target = torch.cat([target, mixup_result])
             else:
                 mixup_lambda = None
 
             ensemble_output = model(waveform, mixup_lambda)
 
-            loss = criterion(ensemble_output, target, training=True)
+            loss = criterion(ensemble_output, target)
             
             optimizer.zero_grad()
             loss.backward()
@@ -120,7 +121,7 @@ def train(args):
 
             if (cur + 1) % 100 == 0:
                 print(f'Iter: {cur}, Loss: {loss}')
-                eval_statistics = evaluate_ensemble(model, eval_loader)
+                eval_statistics = evaluate_DetectNet(model, eval_loader)
                 checkpoint['eval_statistics'] = eval_statistics
 
                 print(f'cur_iter: {cur}, avg_precision: {eval_statistics["average_precision"]}, roc_auc: {eval_statistics["roc_auc"]}')
@@ -140,13 +141,14 @@ def train(args):
             if if_mixup:
                 mixup_lambda = mixup.get_lambda(waveform.shape[0])
                 mixup_lambda = move_data_to_device(mixup_lambda, device)
-                target = do_mixup(target, mixup_lambda)
+                mixup_result = do_mixup(target, mixup_lambda)
+                target = torch.cat([target, mixup_result])
             else:
                 mixup_lambda = None
 
             ensemble_output = model(waveform, mixup_lambda)
 
-            loss = criterion(ensemble_output, target, training=False)
+            loss = criterion(ensemble_output, target)
             
             optimizer.zero_grad()
             loss.backward()
@@ -155,7 +157,7 @@ def train(args):
 
             if (cur + 1) % 100 == 0:
                 print(f'Iter: {cur}, Loss: {loss}')
-                test_statistics = evaluate_ensemble(model, test_loader)
+                test_statistics = evaluate_DetectNet(model, test_loader)
                 checkpoint['test_statistics'] = test_statistics
 
                 print(f'cur_iter: {cur}, avg_precision: {test_statistics["average_precision"]}, roc_auc: {test_statistics["roc_auc"]}')

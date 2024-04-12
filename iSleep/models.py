@@ -215,6 +215,8 @@ class Mlp(nn.Module):
     def init_weight(self):
         init_bn(self.bn0)
         init_layer(self.fc1)
+        init_layer(self.fc2)
+        init_layer(self.fc3)
         init_layer(self.fc_audioset)
 
     def forward(self, input, mixup_lambda=None):
@@ -244,13 +246,10 @@ class Mlp(nn.Module):
         x = F.relu_(self.fc2(x))
         x = F.dropout(x, p=0.5, training=self.training)
 
-        x = F.relu_(self.fc2(x))
-        x = F.dropout(x, p=0.5, training=self.training)
-
         x = F.relu_(self.fc3(x))
         x = F.dropout(x, p=0.5, training=self.training)
 
-        framewise_output = self.fc_audioset(x)   # (batch_size, time_steps, classes_num)
+        framewise_output = torch.sigmoid(self.fc_audioset(x))   # (batch_size, time_steps, classes_num)
         
         # clipwise_output = torch.argmax(framewise_output, dim=2) \
         #     .mode().values.unsqueeze(1)                         # (batch_size, 1)
@@ -354,7 +353,7 @@ class Cnn(nn.Module):
         x = F.relu_(self.fc1(x))
         x = F.dropout(x, p=0.5, training=self.training)
 
-        framewise_output = self.fc_audioset(x)   # (batch_size, time_steps, classes_num)
+        framewise_output = torch.sigmoid(self.fc_audioset(x))   # (batch_size, time_steps, classes_num)
         
         # clipwise_output = torch.argmax(framewise_output, dim=2) \
         #     .mode().values.unsqueeze(1)                         # (batch_size, 1)

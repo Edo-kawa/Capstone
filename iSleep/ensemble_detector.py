@@ -185,7 +185,7 @@ class Conv1dBlock(nn.Module):
         return x
 
 class DetectNet(nn.Module):
-    def __init__(self, thresh1=0.1, thresh2=0.5, sample_rate=32000, window_size=3200, hop_size=3200, 
+    def __init__(self, thresh1=0.2, thresh2=0.5, sample_rate=32000, window_size=3200, hop_size=3200, 
         mel_bins=64, fmin=50, fmax=14000, classes_num=3):
 
         super(DetectNet, self).__init__()
@@ -369,7 +369,7 @@ class DetectNet(nn.Module):
                 keep[inds[class_keep]] = 1
             
             keep = np.where(keep > 0)
-            keep_bboxes = np.concatenate((keep_scores[keep], keep_offset[keep], keep_dur[keep], keep_labels[keep]), axis=-1)
+            keep_bboxes = np.asarray((keep_scores[keep], keep_offset[keep], keep_dur[keep], keep_labels[keep])).transpose(1,0)
 
             result.append(keep_bboxes)
         

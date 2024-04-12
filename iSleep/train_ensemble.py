@@ -61,9 +61,9 @@ def train(args):
     model.to(device)
     
     (train_samples, eval_samples, test_samples) = read_ensemble_data(data_dir=data_dir, sample_rate=sample_rate, model_type=model_type)
-    TrainSet = EventDataSet(sr=sample_rate, samples=train_samples)
-    EvalSet = EventDataSet(sr=sample_rate, samples=eval_samples)
-    TestSet = EventDataSet(sr=sample_rate, samples=test_samples)
+    TrainSet = EventDataSet(sr=sample_rate, samples=train_samples, isDetectNet=True)
+    EvalSet = EventDataSet(sr=sample_rate, samples=eval_samples, isDetectNet=True)
+    TestSet = EventDataSet(sr=sample_rate, samples=test_samples, isDetectNet=True)
 
     train_loader = torch.utils.data.DataLoader(dataset=TrainSet,
                                               batch_size=batch_size if not if_mixup else int(batch_size*1.5), 
@@ -97,7 +97,7 @@ def train(args):
 
     # Training
     for cur in range(cur_iter, num_iters):
-        for i, (waveform, target) in enumerate(train_loader):
+        for i, (waveform, target, _) in enumerate(train_loader):
             waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device)
 
             model.train()
@@ -124,7 +124,10 @@ def train(args):
                 eval_statistics = evaluate_DetectNet(model, eval_loader)
                 checkpoint['eval_statistics'] = eval_statistics
 
-                print(f'cur_iter: {cur}, avg_precision: {eval_statistics["average_precision"]}, roc_auc: {eval_statistics["roc_auc"]}')
+                print(f'Move: pred num = {eval_statistics["move_FDA_up"]}, target num = {eval_statistics["move_FDA_down"]}, total score = {eval_statistics["move_FDA_up"] / eval_statistics["move_FDA_down"]}')
+                print(f'Cough: pred num = {eval_statistics["cough_EDA_up"]}, target num = {eval_statistics["cough_EDA_down"]}, total score = {eval_statistics["cough_EDA_up"] / eval_statistics["cough_EDA_down"]}')
+                print(f'Snore: pred num = {eval_statistics["snoring_EDA_up"]}, target num = {eval_statistics["snoring_EDA_down"]}, total score = {eval_statistics["snoring_EDA_up"] / eval_statistics["snoring_EDA_down"]}')
+                print(f'Avg precision = {eval_statistics["average_precision"]}, roc auc score = {eval_statistics["roc_auc_score"]}')
 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur
@@ -133,7 +136,7 @@ def train(args):
     
     # Fine-tuning
     for cur in range(ft_iters):
-        for i, (waveform, target) in enumerate(eval_loader):
+        for i, (waveform, target, _) in enumerate(eval_loader):
             waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, device)
 
             model.train()
@@ -160,7 +163,10 @@ def train(args):
                 test_statistics = evaluate_DetectNet(model, test_loader)
                 checkpoint['test_statistics'] = test_statistics
 
-                print(f'cur_iter: {cur}, avg_precision: {test_statistics["average_precision"]}, roc_auc: {test_statistics["roc_auc"]}')
+                print(f'Move: pred num = {test_statistics["move_FDA_up"]}, target num = {test_statistics["move_FDA_down"]}, total score = {test_statistics["move_FDA_up"] / test_statistics["move_FDA_down"]}')
+                print(f'Cough: pred num = {test_statistics["cough_EDA_up"]}, target num = {test_statistics["cough_EDA_down"]}, total score = {test_statistics["cough_EDA_up"] / test_statistics["cough_EDA_down"]}')
+                print(f'Snore: pred num = {test_statistics["snoring_EDA_up"]}, target num = {test_statistics["snoring_EDA_down"]}, total score = {test_statistics["snoring_EDA_up"] / test_statistics["snoring_EDA_down"]}')
+                print(f'Avg precision = {test_statistics["average_precision"]}, roc auc score = {test_statistics["roc_auc_score"]}')
 
                 checkpoint['model'] = model.state_dict()
                 checkpoint['iteration'] = cur

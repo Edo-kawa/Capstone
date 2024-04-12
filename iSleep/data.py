@@ -59,9 +59,9 @@ def read_train_data(data_dir, sample_rate):
 
 def read_ensemble_data(data_dir, sample_rate, model_type):
     labels_path = os.path.join(data_dir, 'data.csv')
-    train_samples = {'data': [], 'target': []}
-    eval_samples = {'data': [], 'target': []}
-    test_samples = {'data': [], 'target': []}
+    train_samples = {'data': [], 'target': [], 'framewise_target': []}
+    eval_samples = {'data': [], 'target': [], 'framewise_target': []}
+    test_samples = {'data': [], 'target': [], 'framewise_target': []}
 
     audios_num = 50
     eval_index, test_index = int(audios_num * 0.6), int(audios_num * 0.8)
@@ -87,22 +87,32 @@ def read_ensemble_data(data_dir, sample_rate, model_type):
             if i < eval_index:
                 train_samples['data'].append(waveform)
                 train_samples['target'].append(target)
+                
+                if model_type == 'DetectNet':
+                    train_samples['framewise_target'].append(np.argmax(generate_framewise_target(bboxes), axis=1))
             
             elif i < test_index:
                 eval_samples['data'].append(waveform)
                 eval_samples['target'].append(target)
+                
+                if model_type == 'DetectNet':
+                    eval_samples['framewise_target'].append(np.argmax(generate_framewise_target(bboxes), axis=1))
             
             else:
                 test_samples['data'].append(waveform)
                 test_samples['target'].append(target)
+                
+                if model_type == 'DetectNet':
+                    test_samples['framewise_target'].append(np.argmax(generate_framewise_target(bboxes), axis=1))
 
     return train_samples, eval_samples, test_samples
 
 class EventDataSet(Dataset):
-    def __init__(self, sr=32000, duration=10, samples=None):
+    def __init__(self, sr=32000, duration=10, samples=None, isDetectNet=False):
         self.sr = sr
         self.duration = duration
         self.samples = samples
+        self.isDetectNet = isDetectNet
 
         self.sample_length = sr * duration
 
@@ -114,6 +124,11 @@ class EventDataSet(Dataset):
         waveform = self.resample(waveform)
 
         target = np.asarray(target)
+        
+        if self.isDetectNet:
+            framewise_target = self.samples['framewise_target'][index]
+            framewise_target = np.asarray(framewise_target)
+            return waveform, target, framewise_target
 
         return waveform, target
     

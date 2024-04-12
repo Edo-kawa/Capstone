@@ -42,16 +42,16 @@ def framewise_misclassification_handling(framewise_outputs):
 
     return framewise_outputs
 
-def compute_detection_accuracy(preds, targets, isDetectNet=False):
+def compute_detection_accuracy(preds, targets):
     samples_num = preds.shape[0]
-    if not isDetectNet:
-        preds = framewise_misclassification_handling(np.int64(preds))
+    
+    # preds = framewise_misclassification_handling(np.int64(preds))
 
     move_FDA_up = move_FDA_down = cough_EDA_up = cough_EDA_down = snoring_EDA_up = snoring_EDA_down = 0
 
     for sample_id in range(samples_num):
         pred, target = preds[sample_id], targets[sample_id]
-
+        
         # Compute FDA for frames related to 'move'
         move_target_num = (target == 2).sum()
         move_pred_num = (pred[target == 2] == 2).sum()
@@ -123,14 +123,17 @@ def bbox2framewise(pred):
     
     batch_size = len(pred)
     frames_num = 100
-    framewise_outputs = np.zeros([batch_size, frames_num, 3])
+    framewise_outputs = np.zeros([batch_size, frames_num])
     
     for batch_id in range(batch_size):
-        for bbox in pred[batch_id]:
-            start = int(np.max([0, bbox[1]-0.5*bbox[2]]))
-            end = int(np.min(frames_num-1, bbox[1]+0.5*bbox[2]))
+        cur_batch = pred[batch_id]
+        for bbox_id in range(len(pred[batch_id])):
+            cur_bbox = cur_batch[bbox_id]
             
-            framewise_outputs[batch_id, start:end+1, int(bbox[3])] = 1
+            start = np.int64(np.maximum(0, 10*cur_bbox[1]-5*np.exp(cur_bbox[2])))
+            end = np.int64(np.minimum(frames_num-1, 10*cur_bbox[1]+5*np.exp(cur_bbox[2])))
+            
+            framewise_outputs[batch_id, start:end+1] = int(cur_bbox[3])+1
     
     return framewise_outputs
     
@@ -154,9 +157,11 @@ def evaluate_DetectNet(model, data_loader):
     iters = 0
 
     preds = []
+    framewise_targets = []
 
-    for i, (waveform, target) in enumerate(data_loader):
-        waveform, target = move_data_to_device(waveform, device), move_data_to_device(target, 'cpu')
+    for i, (waveform, target, framewise_target) in enumerate(data_loader):
+        waveform, target, framewise_target = move_data_to_device(waveform, device), move_data_to_device(target, 'cpu'), \
+            move_data_to_device(framewise_target, 'cpu')
 
         with torch.no_grad():
             model.eval()
@@ -185,10 +190,20 @@ def evaluate_DetectNet(model, data_loader):
 
         avg_precision += metrics.average_precision_score(cls_targets[obj_mask], cls_outputs[obj_mask], average=None)
         roc_auc += metrics.roc_auc_score(cls_targets[obj_mask], cls_outputs[obj_mask], average=None)
-
+        
         preds.append(pred)
+        framewise_targets.append(framewise_target)
         iters += 1
+    
+    framewise_outputs = bbox2framewise(preds[0])
+    framewise_targets = np.concatenate(framewise_targets)
+    
+    move_FDA_up, move_FDA_down, cough_EDA_up, cough_EDA_down, \
+            snoring_EDA_up, snoring_EDA_down = compute_detection_accuracy(framewise_outputs, framewise_targets)
 
-    statistics = {'average_precision': avg_precision/iters, 'roc_auc': roc_auc/iters, 'pred_result': pred}
+    statistics = {'move_FDA_up': move_FDA_up, 'move_FDA_down': move_FDA_down,
+                  'cough_EDA_up': cough_EDA_up, 'cough_EDA_down': cough_EDA_down,
+                  'snoring_EDA_up': snoring_EDA_up, 'snoring_EDA_down': snoring_EDA_down,
+                  'average_precision': avg_precision/iters, 'roc_auc_score': roc_auc/iters}
 
     return statistics

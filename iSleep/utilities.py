@@ -128,12 +128,14 @@ def generate_framewise_target(labels):
     """
 
     frames_num = config.ensemble_frames_num
+    classes_num = config.classes_num
 
-    framewise_target = np.zeros((frames_num, config.classes_num))
+    framewise_target = np.zeros((frames_num, classes_num))
+
     framewise_target[:, 0] = 1
 
     for label in labels:
-        class_id = int(label[0] + 1)
+        class_id = int(label[0]+1)
 
         right_frame_id = ceil(label[2] * config.frames_num_per_sec) - 1         # label[2] (end_time) != 0
         left_frame_id = floor(label[1] * config.frames_num_per_sec)             # label[1] (start_time) != 10

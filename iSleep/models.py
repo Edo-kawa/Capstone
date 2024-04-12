@@ -487,7 +487,7 @@ class Cnn14(nn.Module):
         ref = 1.0
         amin = 1e-10
         top_db = None
-        self.interpolate_ratio = 16     # Downsampled ratio
+        self.interpolate_ratio = 4     # Downsampled ratio
 
         self.spectrogram_extractor = Spectrogram(n_fft=window_size, hop_length=hop_size, 
             win_length=window_size, window=window, center=center, pad_mode=pad_mode, 
@@ -506,11 +506,11 @@ class Cnn14(nn.Module):
         self.conv_block2 = ConvBlock(in_channels=64, out_channels=128)
         self.conv_block3 = ConvBlock(in_channels=128, out_channels=256)
         self.conv_block4 = ConvBlock(in_channels=256, out_channels=512)
-        self.conv_block5 = ConvBlock(in_channels=512, out_channels=1024)
-        self.conv_block6 = ConvBlock(in_channels=1024, out_channels=2048)
+        # self.conv_block5 = ConvBlock(in_channels=512, out_channels=1024)
+        # self.conv_block6 = ConvBlock(in_channels=1024, out_channels=2048)
 
-        self.fc1 = nn.Linear(2048, 2048, bias=True)
-        self.att_block = AttBlock(2048, classes_num, activation='sigmoid')
+        self.fc1 = nn.Linear(512, 400, bias=True)
+        self.fc_audioset = nn.Linear(400, classes_num, bias=True)
         
         self.init_weight()
 
@@ -542,16 +542,16 @@ class Cnn14(nn.Module):
 
         x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block2(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block2(x, pool_size=(1, 1), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
         x = self.conv_block3(x, pool_size=(2, 2), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block4(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block4(x, pool_size=(1, 1), pool_type='avg')
         x = F.dropout(x, p=0.2, training=self.training)
-        x = self.conv_block5(x, pool_size=(2, 2), pool_type='avg')
-        x = F.dropout(x, p=0.2, training=self.training)        
-        x = self.conv_block6(x, pool_size=(1, 1), pool_type='avg')
-        x = F.dropout(x, p=0.2, training=self.training)
+        # x = self.conv_block5(x, pool_size=(2, 2), pool_type='avg')
+        # x = F.dropout(x, p=0.2, training=self.training)        
+        # x = self.conv_block6(x, pool_size=(1, 1), pool_type='avg')
+        # x = F.dropout(x, p=0.2, training=self.training)
         x = torch.mean(x, dim=3)
         
         # (x1, _) = torch.max(x, dim=2)
@@ -562,13 +562,12 @@ class Cnn14(nn.Module):
         x = F.dropout(x, p=0.5, training=self.training)
         x = x.transpose(1, 2)
         x = F.relu_(self.fc1(x))
-        x = x.transpose(1, 2)
         x = F.dropout(x, p=0.5, training=self.training)
-        (clipwise_output, _, segmentwise_output) = self.att_block(x)
-        segmentwise_output = segmentwise_output.transpose(1, 2)
+        segmentwise_output = torch.sigmoid(self.fc_audioset(x))
+        # (clipwise_output, _) = torch.max(segmentwise_output, dim=1)
 
         # Get framewise output
         framewise_output = interpolate(segmentwise_output, self.interpolate_ratio)
-        framewise_output = pad_framewise_output(framewise_output, frames_num)
+        # framewise_output = pad_framewise_output(framewise_output, frames_num)
 
         return framewise_output
